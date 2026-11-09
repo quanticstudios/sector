@@ -237,7 +237,7 @@ func (v *View) memCard(gtx layout.Context) layout.Dimensions {
 	m := v.last.Mem
 	div, unit := unitOf(float64(m.Total))
 	head := v.head("Memory", "last 60 s",
-		span{s: inUnit(float64(m.Used), div), c: cSoft}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(m.Total), div) + " " + unit, c: cSoft})
+		span{s: inUnit(float64(m.Used), div), c: cSoft, tab: true}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(m.Total), div) + " " + unit, c: cSoft})
 	graph := v.spark(float64(m.Total), niceStep(float64(m.Total)/div/4)*div, div, unit,
 		line{val: func(e entry) float64 { return e.used + e.cached }, c: th.MemCache, w: 1, fill: true, tag: "cached " + inUnit(float64(m.Cached), div)},
 		line{val: func(e entry) float64 { return e.used }, c: th.MemUsed, fill: true, tag: "used " + inUnit(float64(m.Used), div)})
@@ -251,16 +251,16 @@ func (v *View) memCard(gtx layout.Context) layout.Dimensions {
 		rect(gtx, image.Rect(min(w, u+c+2*g), 0, w, h), 0, cTrack)
 		return layout.Dimensions{Size: image.Pt(w, h)}
 	}
-	num := func(n uint64) span { return span{s: bytesStr(float64(n)), c: th.Fg} }
+	num := func(n uint64) span { return span{s: bytesStr(float64(n)), c: th.Fg, tab: true} }
 	cells := []layout.Widget{
-		v.kv([]span{{mark: swatch(th.MemUsed)}, {s: "Used", c: th.Muted}, {s: pct(share(m.Used, m.Total)), c: th.TextQuiet}}, num(m.Used)),
+		v.kv([]span{{mark: swatch(th.MemUsed)}, {s: "Used", c: th.Muted}, {s: pct(share(m.Used, m.Total)), c: th.TextQuiet, tab: true}}, num(m.Used)),
 		v.kv([]span{{s: "Available", c: th.Muted}}, num(m.Available)),
 		v.kv([]span{{mark: swatch(th.MemCache)}, {s: "Cached", c: th.Muted}}, num(m.Cached)),
 		v.kv([]span{{s: "Free", c: th.Muted}}, num(m.Free)),
 	}
 	sdiv, sunit := unitOf(float64(m.SwapTotal))
 	swap := v.kv([]span{{s: "Swap", c: th.Muted}},
-		span{s: inUnit(float64(m.SwapUsed), sdiv), c: th.Fg}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(m.SwapTotal), sdiv) + " " + sunit, c: th.Fg})
+		span{s: inUnit(float64(m.SwapUsed), sdiv), c: th.Fg, tab: true}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(m.SwapTotal), sdiv) + " " + sunit, c: th.Fg})
 	return v.card(gtx, func(gtx layout.Context) layout.Dimensions {
 		parts := []part{rigid(head), gap(gtx.Dp(8)), flexed(gtx.Dp(48), graph).to(gtx.Dp(sparkFloor)), gap(gtx.Dp(10)), rigid(memrow), gap(gtx.Dp(9)), rigid(v.grid2(cells))}
 		if m.SwapTotal > 0 {
@@ -306,8 +306,8 @@ func (v *View) ioPair(r, w string, strong bool) []span {
 		wt = font.Medium
 	}
 	return []span{
-		{mark: ioMark(cIOOut, true)}, {s: "read", c: th.TextQuiet}, {s: r, c: th.Fg, w: wt},
-		{mark: ioMark(th.Blue, false)}, {s: "write", c: th.TextQuiet}, {s: w, c: th.Fg, w: wt}, {s: "MB/s", c: th.TextQuiet},
+		{mark: ioMark(cIOOut, true)}, {s: "read", c: th.TextQuiet}, {s: r, c: th.Fg, w: wt, tab: true},
+		{mark: ioMark(th.Blue, false)}, {s: "write", c: th.TextQuiet}, {s: w, c: th.Fg, w: wt, tab: true}, {s: "MB/s", c: th.TextQuiet},
 	}
 }
 
@@ -358,7 +358,7 @@ func (v *View) drive(gtx layout.Context, d sample.Drive) []part {
 	top := diskTop(h, d.Name)
 	head := func(gtx layout.Context) layout.Dimensions {
 		busy := func(gtx layout.Context) layout.Dimensions {
-			return v.rich(gtx, theme.Size12, span{s: "busy", c: th.Muted}, span{s: strconv.Itoa(int(math.Round(d.Busy*100))) + "%", c: th.Fg, w: font.SemiBold})
+			return v.rich(gtx, theme.Size12, span{s: "busy", c: th.Muted}, span{s: strconv.Itoa(int(math.Round(d.Busy*100))) + "%", c: th.Fg, w: font.SemiBold, tab: true})
 		}
 		mounts := mountNames(d.Mounts)
 		if narrow(gtx) || mounts == "" {
@@ -411,12 +411,12 @@ func (v *View) netCard(gtx layout.Context) layout.Dimensions {
 		line{val: func(e entry) float64 { return e.nets[n.Name][1] }, c: cIOOut, dashd: true})
 	row := func(name string, dash bool, c color.NRGBA, rate, peak float64, total uint64) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
-			left := []span{{mark: ioMark(c, dash)}, {s: name, c: th.Muted}, {s: rateStr(rate), c: th.Fg}}
+			left := []span{{mark: ioMark(c, dash)}, {s: name, c: th.Muted}, {s: rateStr(rate), c: th.Fg, tab: true}}
 			if narrow(gtx) {
 				return v.rich(gtx, theme.Size12, left...)
 			}
-			return v.kv(left, span{s: "peak", c: th.TextQuiet}, span{s: bitsStr(peak), c: cSoft},
-				span{s: "· total", c: th.TextQuiet}, span{s: bytesStr(float64(total)), c: cSoft})(gtx)
+			return v.kv(left, span{s: "peak", c: th.TextQuiet}, span{s: bitsStr(peak), c: cSoft, tab: true},
+				span{s: "· total", c: th.TextQuiet}, span{s: bytesStr(float64(total)), c: cSoft, tab: true})(gtx)
 		}
 	}
 	return v.card(gtx, func(gtx layout.Context) layout.Dimensions {

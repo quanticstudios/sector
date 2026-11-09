@@ -51,11 +51,11 @@ type View struct {
 // intervals are the choices of the title bar's segmented control.
 var intervals = [3]time.Duration{time.Second, 2 * time.Second, 5 * time.Second}
 
-// New returns a View drawn in th, sampling every second until the user
+// New returns a View drawn in th, sampling every 2 seconds until the user
 // picks another interval.
 func New(th *theme.Theme) *View {
 	v := &View{th: th, slots: map[string]int{}, names: map[string]string{}}
-	v.interval.Store(int64(time.Second))
+	v.interval.Store(int64(2 * time.Second))
 	v.filter.SingleLine = true
 	v.scroll.Axis = layout.Vertical
 	return v
@@ -160,6 +160,11 @@ func (v *View) dash(gtx layout.Context, avail int) layout.Dimensions {
 	v.measuring = false
 	if fr < 0 {
 		nat[cardProcs] = max(nat[cardProcs], gtx.Dp(320))
+	} else {
+		// The wide layout grows the network graph from 48 to 92 dp, tall
+		// enough for spark to label every gridline. The floor stays, so
+		// a short window squeezes it back first.
+		nat[cardNet] += gtx.Dp(44)
 	}
 
 	rows := rowHeights(p, nat, floor, avail-2*pad, gp, fr)
@@ -228,7 +233,7 @@ func (v *View) head(title, sub string, right ...span) layout.Widget {
 func (v *View) procsCard(gtx layout.Context) layout.Dimensions {
 	t := v.table
 	head := v.head("Processes", "by agent, repo and app",
-		span{s: commas(t.Procs), c: cSoft}, span{s: "in", c: v.th.TextQuiet}, span{s: commas(len(t.Groups)) + " groups", c: cSoft})
+		span{s: commas(t.Procs), c: cSoft, tab: true}, span{s: "in", c: v.th.TextQuiet}, span{s: commas(len(t.Groups)) + " groups", c: cSoft, tab: true})
 	if v.measuring {
 		return v.card(gtx, head)
 	}

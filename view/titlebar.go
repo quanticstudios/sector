@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 	"time"
 
 	"gioui.org/font"
@@ -16,8 +17,8 @@ import (
 	"github.com/quanticstudios/sector/theme"
 )
 
-// titleBar draws the mark, the host chip and the tools: filter, interval,
-// pause, uptime and clock. It returns its size.
+// titleBar draws the mark, the host chip with the clock and uptime, and the
+// tools: filter, interval and pause. It returns its size.
 func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 	th := v.th
 	for i := range v.seg {
@@ -43,6 +44,10 @@ func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 	if host.Model == "" {
 		detail = ""
 	}
+	up := host.Uptime
+	if !v.last.Time.IsZero() && up > 0 {
+		up += now.Sub(v.last.Time)
+	}
 	sp := layout.Spacer{Width: 10}
 	children := []layout.FlexChild{
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -58,7 +63,7 @@ func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 			if host.Name == "" {
 				return layout.Dimensions{}
 			}
-			return v.chip(gtx, host.Name, detail, roomy)
+			return v.chip(gtx, host.Name, detail, roomy, now, up)
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -73,25 +78,6 @@ func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 		children = append(children, layout.Rigid(sp.Layout), layout.Rigid(v.segmented))
 	}
 	children = append(children, layout.Rigid(sp.Layout), layout.Rigid(v.pauseButton))
-	if !tiny {
-		children = append(children, layout.Rigid(sp.Layout), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			s := image.Pt(gtx.Dp(1), gtx.Dp(16))
-			rect(gtx, image.Rectangle{Max: s}, 0, cStrong)
-			return layout.Dimensions{Size: s}
-		}))
-	}
-	up := host.Uptime
-	if !v.last.Time.IsZero() && up > 0 {
-		up += now.Sub(v.last.Time)
-	}
-	children = append(children,
-		layout.Rigid(sp.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return v.rich(gtx, theme.Size12, span{s: "up", c: th.Muted}, span{s: uptimeStr(up), c: th.Muted})
-		}),
-		layout.Rigid(sp.Layout),
-		layout.Rigid(v.text(theme.Size12, font.SemiBold, th.Fg, now.Format("15:04:05"))),
-	)
 	layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Pt(gtx.Constraints.Max.X, 0)
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
@@ -99,8 +85,11 @@ func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
-// chip is the host: monitor icon, name, and the CPU and memory when roomy.
-func (v *View) chip(gtx layout.Context, name, detail string, roomy bool) layout.Dimensions {
+// chip is the host: monitor icon, name, the CPU and memory when roomy, then
+// the clock and uptime. Both tick in tabular digits. The uptime keeps room
+// for a two-digit hour and comes last, where the chip's padding absorbs a
+// day count growing.
+func (v *View) chip(gtx layout.Context, name, detail string, roomy bool, now time.Time, up time.Duration) layout.Dimensions {
 	th := v.th
 	return v.boxed(gtx, gtx.Dp(6), gtx.Dp(10), gtx.Dp(6), th.Surface, func(gtx layout.Context) layout.Dimensions {
 		spans := []span{
@@ -114,6 +103,14 @@ func (v *View) chip(gtx layout.Context, name, detail string, roomy bool) layout.
 		if roomy && detail != "" {
 			spans = append(spans, span{s: detail, c: th.Muted})
 		}
+		ups := uptimeStr(up)
+		upSlot := "88:88:88"
+		if i := strings.IndexByte(ups, 'd'); i >= 0 {
+			upSlot = ups[:i+2] + upSlot
+		}
+		spans = append(spans, span{s: "·", c: th.Muted},
+			span{s: now.Format("15:04:05"), c: th.Fg, w: font.SemiBold, tab: true},
+			span{s: "·", c: th.Muted}, span{s: "up", c: th.Muted}, span{s: ups, c: th.Muted, tab: true, slot: upSlot})
 		return v.rich(gtx, theme.Size12, spans...)
 	})
 }
