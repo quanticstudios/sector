@@ -233,7 +233,7 @@ func (v *View) head(title, sub string, right ...span) layout.Widget {
 func (v *View) procsCard(gtx layout.Context) layout.Dimensions {
 	t := v.table
 	head := v.head("Processes", "by agent, repo and app",
-		span{s: commas(t.Procs), c: cSoft}, span{s: "in", c: v.th.TextQuiet}, span{s: commas(len(t.Groups)) + " groups", c: cSoft, slot: "88 groups", right: true})
+		span{s: commas(t.Procs), c: cSoft, tab: true}, span{s: "in", c: v.th.TextQuiet}, span{s: commas(len(t.Groups)) + " groups", c: cSoft, tab: true})
 	if v.measuring {
 		return v.card(gtx, head)
 	}

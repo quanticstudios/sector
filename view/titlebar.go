@@ -86,9 +86,9 @@ func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 }
 
 // chip is the host: monitor icon, name, the CPU and memory when roomy, then
-// the clock and uptime. Those two tick, so each takes a slot as wide as its
-// widest form, and the uptime comes last, where the chip's padding absorbs
-// a day count growing.
+// the clock and uptime. Both tick in tabular digits. The uptime keeps room
+// for a two-digit hour and comes last, where the chip's padding absorbs a
+// day count growing.
 func (v *View) chip(gtx layout.Context, name, detail string, roomy bool, now time.Time, up time.Duration) layout.Dimensions {
 	th := v.th
 	return v.boxed(gtx, gtx.Dp(6), gtx.Dp(10), gtx.Dp(6), th.Surface, func(gtx layout.Context) layout.Dimensions {
@@ -109,8 +109,8 @@ func (v *View) chip(gtx layout.Context, name, detail string, roomy bool, now tim
 			upSlot = ups[:i+2] + upSlot
 		}
 		spans = append(spans, span{s: "·", c: th.Muted},
-			span{s: now.Format("15:04:05"), c: th.Fg, w: font.SemiBold, slot: "88:88:88"},
-			span{s: "·", c: th.Muted}, span{s: "up", c: th.Muted}, span{s: ups, c: th.Muted, slot: upSlot})
+			span{s: now.Format("15:04:05"), c: th.Fg, w: font.SemiBold, tab: true},
+			span{s: "·", c: th.Muted}, span{s: "up", c: th.Muted}, span{s: ups, c: th.Muted, tab: true, slot: upSlot})
 		return v.rich(gtx, theme.Size12, spans...)
 	})
 }

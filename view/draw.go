@@ -42,12 +42,12 @@ type span struct {
 	w    font.Weight
 	size unit.Sp // 0 for the row's size
 	mark layout.Widget
-	// slot is the widest form of a value that changes every tick, like
-	// "88:88:88". The span takes that much width whatever its text, so it
-	// never pushes its neighbors. The text sits at the slot's left, or
-	// at its right when right is set.
-	slot  string
-	right bool
+	// tab draws digits as tabular figures, so a value's width changes
+	// only when its digit count does.
+	tab bool
+	// slot is the widest form of a tab value, like "88:88:88": the span
+	// takes that much width even when its digit count drops.
+	slot string
 }
 
 // rich lays spans side by side on one baseline, a space apart.
@@ -63,41 +63,65 @@ func (v *View) rich(gtx layout.Context, size unit.Sp, spans ...span) layout.Dime
 			if sz == 0 {
 				sz = size
 			}
-			if s.slot == "" {
+			if !s.tab && s.slot == "" {
 				return v.th.Label(gtx, sz, s.w, s.c, s.s)
 			}
-			m := op.Record(gtx.Ops)
-			d := v.th.Label(gtx, sz, s.w, s.c, s.s)
-			call := m.Stop()
-			sw := v.slotWidth(gtx, sz, s.w, s.slot)
-			if s.right && d.Size.X < sw {
-				defer op.Offset(image.Pt(sw-d.Size.X, 0)).Push(gtx.Ops).Pop()
+			d := v.tabular(gtx, sz, s.w, s.c, s.s)
+			if s.slot != "" {
+				m := op.Record(gtx.Ops)
+				d.Size.X = max(d.Size.X, v.tabular(gtx, sz, s.w, s.c, s.slot).Size.X)
+				m.Stop()
 			}
-			call.Add(gtx.Ops)
-			d.Size.X = max(d.Size.X, sw)
 			return d
 		})
 	}
 	return layout.Flex{Alignment: layout.Baseline, Gap: gtx.Sp(size) / 4}.Layout(gtx, children...)
 }
 
-// slotWidth is the width of tmpl with its digits set to whichever digit
-// makes it widest, since digits need not share one width.
-func (v *View) slotWidth(gtx layout.Context, size unit.Sp, w font.Weight, tmpl string) int {
+func isDigit(r rune) bool { return r >= '0' && r <= '9' }
+
+// tabular draws s with each digit centered in a cell as wide as the widest
+// digit. Geist's digits are proportional, so without it a value's width
+// changes with the digits it shows.
+// ponytail: measures the ten digits on every call; cache the cell width per
+// size and weight if frames get slow.
+func (v *View) tabular(gtx layout.Context, size unit.Sp, w font.Weight, c color.NRGBA, s string) layout.Dimensions {
 	gtx.Constraints = layout.Constraints{Max: image.Pt(big, big)}
-	widest := 0
-	for d := '0'; d <= '9'; d++ {
-		s := strings.Map(func(r rune) rune {
-			if r >= '0' && r <= '9' {
-				return d
-			}
-			return r
-		}, tmpl)
+	label := func(t string) (layout.Dimensions, op.CallOp) {
 		m := op.Record(gtx.Ops)
-		widest = max(widest, v.th.Label(gtx, size, w, color.NRGBA{}, s).Size.X)
-		m.Stop()
+		d := v.th.Label(gtx, size, w, c, t)
+		return d, m.Stop()
 	}
-	return widest
+	if s == "" {
+		d, _ := label(s)
+		return d
+	}
+	cell := 0
+	for r := '0'; r <= '9'; r++ {
+		d, _ := label(string(r))
+		cell = max(cell, d.Size.X)
+	}
+	var out layout.Dimensions
+	for s != "" {
+		end := 1
+		if !isDigit(rune(s[0])) {
+			if end = strings.IndexFunc(s, isDigit); end < 0 {
+				end = len(s)
+			}
+		}
+		d, call := label(s[:end])
+		x, adv := out.Size.X, d.Size.X
+		if isDigit(rune(s[0])) {
+			x, adv = x+(cell-d.Size.X)/2, cell
+		}
+		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		t.Pop()
+		out.Size = image.Pt(out.Size.X+adv, max(out.Size.Y, d.Size.Y))
+		out.Baseline = d.Baseline
+		s = s[end:]
+	}
+	return out
 }
 
 // text is one label as a widget.
