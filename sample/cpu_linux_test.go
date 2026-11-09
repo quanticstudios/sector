@@ -97,6 +97,7 @@ func TestTemps(t *testing.T) {
 		files  map[string]string
 		diePkg []int
 		want   []float64
+		pkg    float64
 	}{
 		{
 			name: "Tccd in label order, not file order",
@@ -108,6 +109,7 @@ func TestTemps(t *testing.T) {
 			},
 			diePkg: []int{0, 0},
 			want:   []float64{52, 45.5},
+			pkg:    70,
 		},
 		{
 			// Two packages: hwmon2 belongs to package 0 and must come
@@ -118,9 +120,12 @@ func TestTemps(t *testing.T) {
 				h + "hwmon10/temp4_label": "Tccd2", h + "hwmon10/temp4_input": "62000",
 				h + "hwmon2/name": "k10temp", h + "hwmon2/temp3_label": "Tccd1", h + "hwmon2/temp3_input": "41000",
 				h + "hwmon2/temp4_label": "Tccd2", h + "hwmon2/temp4_input": "42000",
+				h + "hwmon10/temp1_label": "Tctl", h + "hwmon10/temp1_input": "70000",
+				h + "hwmon2/temp1_label": "Tctl", h + "hwmon2/temp1_input": "50000",
 			},
 			diePkg: []int{0, 0, 1, 1},
 			want:   []float64{41, 42, 61, 62},
+			pkg:    50,
 		},
 		{
 			name: "Tctl for every die",
@@ -129,6 +134,7 @@ func TestTemps(t *testing.T) {
 			},
 			diePkg: []int{0, 0},
 			want:   []float64{61.25, 61.25},
+			pkg:    61.25,
 		},
 		{
 			name: "Tdie over Tctl",
@@ -138,6 +144,7 @@ func TestTemps(t *testing.T) {
 			},
 			diePkg: []int{0},
 			want:   []float64{53},
+			pkg:    80,
 		},
 		{
 			name: "coretemp per package",
@@ -148,19 +155,20 @@ func TestTemps(t *testing.T) {
 			},
 			diePkg: []int{0, 1},
 			want:   []float64{39, 44},
+			pkg:    39,
 		},
 		{name: "no sensors", files: map[string]string{"sys/x": ""}, diePkg: []int{0}, want: []float64{0}},
 	}
 	for _, tc := range tests {
 		useTree(t, writeTree(t, tc.files))
 		dies := make([]Die, len(tc.diePkg))
-		readTemps(dies, tc.diePkg)
+		pkg := readTemps(dies, tc.diePkg)
 		var got []float64
 		for _, d := range dies {
 			got = append(got, d.TempC)
 		}
-		if !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		if !reflect.DeepEqual(got, tc.want) || pkg != tc.pkg {
+			t.Errorf("%s: dies %v package %v, want %v and %v", tc.name, got, pkg, tc.want, tc.pkg)
 		}
 	}
 }

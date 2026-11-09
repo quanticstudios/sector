@@ -57,6 +57,12 @@ func (v *View) coresCard(gtx layout.Context) layout.Dimensions {
 	if cpu.MHz > 0 {
 		right = append(right, span{s: strconv.FormatFloat(cpu.MHz/1000, 'f', 1, 64) + " GHz", c: cSoft})
 	}
+	if cpu.TempC > 0 {
+		if len(right) > 0 {
+			right = append(right, span{s: "·", c: th.TextQuiet})
+		}
+		right = append(right, v.temp(cpu.TempC)...)
+	}
 	if cpu.PowerW > 0 {
 		if len(right) > 0 {
 			right = append(right, span{s: "·", c: th.TextQuiet})
@@ -109,14 +115,19 @@ func (v *View) dieHead(d die, n, smt int) layout.Widget {
 			if d.tempC <= 0 {
 				return layout.Dimensions{}
 			}
-			c := heat(th, (d.tempC-50)/35)
-			return v.rich(gtx, theme.Size12, span{mark: func(gtx layout.Context) layout.Dimensions {
-				dd := icon(gtx, icThermo, gtx.Dp(13), c)
-				dd.Baseline = gtx.Dp(2)
-				return dd
-			}}, span{s: fmt.Sprintf("%.0f °C", d.tempC), c: c, w: font.SemiBold})
+			return v.rich(gtx, theme.Size12, v.temp(d.tempC)...)
 		})
 	}
+}
+
+// temp is a thermometer and a temperature, green at 50 °C to red at 85 °C.
+func (v *View) temp(c float64) []span {
+	col := heat(v.th, (c-50)/35)
+	return []span{{mark: func(gtx layout.Context) layout.Dimensions {
+		d := icon(gtx, icThermo, gtx.Dp(13), col)
+		d.Baseline = gtx.Dp(2)
+		return d
+	}}, {s: fmt.Sprintf("%.0f °C", c), c: col, w: font.SemiBold}}
 }
 
 // chipCols is how many cores a chip map row holds, and chipLines how many

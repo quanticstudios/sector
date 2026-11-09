@@ -33,6 +33,7 @@ type CPU struct {
 	Dies    []Die     // CCDs; one per package when the CPU reports no dies
 	MHz     float64   // mean current clock, 0 when unknown
 	PowerW  float64   // package power in watts from RAPL, 0 when unknown
+	TempC   float64   // package temperature: k10temp Tctl (or Tdie), Intel Package id 0; 0 when unknown
 }
 
 // Core is one physical core and the logical CPUs (SMT siblings) on it.
