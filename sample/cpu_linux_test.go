@@ -110,6 +110,19 @@ func TestTemps(t *testing.T) {
 			want:   []float64{52, 45.5},
 		},
 		{
+			// Two packages: hwmon2 belongs to package 0 and must come
+			// before hwmon10, which sorts first as a string.
+			name: "hwmon in number order",
+			files: map[string]string{
+				h + "hwmon10/name": "k10temp", h + "hwmon10/temp3_label": "Tccd1", h + "hwmon10/temp3_input": "61000",
+				h + "hwmon10/temp4_label": "Tccd2", h + "hwmon10/temp4_input": "62000",
+				h + "hwmon2/name": "k10temp", h + "hwmon2/temp3_label": "Tccd1", h + "hwmon2/temp3_input": "41000",
+				h + "hwmon2/temp4_label": "Tccd2", h + "hwmon2/temp4_input": "42000",
+			},
+			diePkg: []int{0, 0, 1, 1},
+			want:   []float64{41, 42, 61, 62},
+		},
+		{
 			name: "Tctl for every die",
 			files: map[string]string{
 				h + "hwmon0/name": "k10temp", h + "hwmon0/temp1_label": "Tctl", h + "hwmon0/temp1_input": "61250",

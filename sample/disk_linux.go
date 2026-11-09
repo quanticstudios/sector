@@ -12,17 +12,19 @@ import (
 
 // blockIndex maps the kernel's block devices onto physical disks.
 type blockIndex struct {
-	disk map[string]string // disk, partition or dm-N name to its physical disk
-	dev  map[string]string // "major:minor" to block device name
-	dm   map[string]string // device-mapper name ("cryptroot") to dm-N
+	disk  map[string]string             // disk or partition name to its physical disk
+	split map[string]map[string]float64 // dm-N to the share of it on each physical disk
+	dev   map[string]string             // "major:minor" to block device name
+	dm    map[string]string             // device-mapper name ("cryptroot") to dm-N
 }
 
 // readBlockIndex walks /sys/block. A physical disk has a device link, which
 // loop, ram, zram and dm devices lack; its partitions are subdirectories
 // with a partition file. Device-mapper devices (LUKS, LVM) resolve through
-// their slaves down to a partition or disk.
+// their slaves down to every partition or disk under them.
 func readBlockIndex() blockIndex {
-	idx := blockIndex{disk: map[string]string{}, dev: map[string]string{}, dm: map[string]string{}}
+	idx := blockIndex{disk: map[string]string{}, split: map[string]map[string]float64{},
+		dev: map[string]string{}, dm: map[string]string{}}
 	root := filepath.Join(sysRoot, "block")
 	ents, _ := os.ReadDir(root)
 	var dms []string
@@ -47,25 +49,54 @@ func readBlockIndex() blockIndex {
 		}
 	}
 	for _, dm := range dms {
-		if d := idx.slaveDisk(dm, 0); d != "" {
-			idx.disk[dm] = d
+		w := map[string]float64{}
+		idx.leafSizes(dm, 0, w)
+		var total float64
+		for _, v := range w {
+			total += v
 		}
+		for d, v := range w {
+			if total == 0 { // sizes unknown: split evenly
+				w[d] = 1 / float64(len(w))
+			} else {
+				w[d] = v / total
+			}
+		}
+		idx.split[dm] = w
 	}
 	return idx
 }
 
-// slaveDisk follows a dm device's slaves to the first physical disk.
-func (idx blockIndex) slaveDisk(name string, depth int) string {
-	if d, ok := idx.disk[name]; ok || depth > 8 {
-		return d
+// leafSizes follows a dm device's slaves down to partitions and disks and
+// adds each one's size in sectors to w under its physical disk. The split
+// goes by slave size, not by where LVM placed the volume's extents: that
+// layout lives in the LVM metadata, which only root can read.
+func (idx blockIndex) leafSizes(name string, depth int, w map[string]float64) {
+	if d, ok := idx.disk[name]; ok {
+		dir := filepath.Join(sysRoot, "block", d)
+		if name != d {
+			dir = filepath.Join(dir, name)
+		}
+		n, _ := readInt(filepath.Join(dir, "size"))
+		w[d] += float64(n)
+		return
+	}
+	if depth > 8 {
+		return
 	}
 	slaves, _ := os.ReadDir(filepath.Join(sysRoot, "block", name, "slaves"))
 	for _, s := range slaves {
-		if d := idx.slaveDisk(s.Name(), depth+1); d != "" {
-			return d
-		}
+		idx.leafSizes(s.Name(), depth+1, w)
 	}
-	return ""
+}
+
+// on lists the physical disks a block device sits on, with the share of it
+// on each.
+func (idx blockIndex) on(dev string) map[string]float64 {
+	if d, ok := idx.disk[dev]; ok {
+		return map[string]float64{d: 1}
+	}
+	return idx.split[dev]
 }
 
 // device names the block device a mount comes from. btrfs reports an
@@ -122,21 +153,28 @@ func unescapeMount(s string) string {
 	return b.String()
 }
 
+// fsShare is one filesystem on a disk: a mount point to measure it at and
+// the share of it on that disk.
+type fsShare struct {
+	point string
+	share float64
+}
+
 // foldMounts groups mount points by physical disk, sorted so "/" comes
-// first. fs lists one mount point per filesystem on each disk, so btrfs
-// subvolumes of one filesystem are measured once.
-func foldMounts(ms []mount, idx blockIndex) (points, fs map[string][]string) {
-	points, fs = map[string][]string{}, map[string][]string{}
+// first. A volume over several disks (LVM) lists its points on each. fs
+// lists each filesystem once per disk, so btrfs subvolumes and bind mounts
+// of one filesystem are measured once.
+func foldMounts(ms []mount, idx blockIndex) (points map[string][]string, fs map[string][]fsShare) {
+	points, fs = map[string][]string{}, map[string][]fsShare{}
 	counted := map[string]bool{}
 	for _, m := range ms {
-		disk := idx.disk[idx.device(m)]
-		if disk == "" {
-			continue
-		}
-		points[disk] = append(points[disk], m.point)
-		if !counted[m.dev] {
-			counted[m.dev] = true
-			fs[disk] = append(fs[disk], m.point)
+		first := !counted[m.dev]
+		counted[m.dev] = true
+		for disk, share := range idx.on(idx.device(m)) {
+			points[disk] = append(points[disk], m.point)
+			if first {
+				fs[disk] = append(fs[disk], fsShare{m.point, share})
+			}
 		}
 	}
 	for d, p := range points {
@@ -196,9 +234,10 @@ func (s *sampler) readDrives(dt float64) ([]Drive, error) {
 			Model:  readStr(filepath.Join(sysRoot, "block", name, "device/model")),
 			Mounts: points[name],
 		}
-		for _, p := range fs[name] {
-			if size, used, free, err := statfs(p); err == nil {
-				d.Size, d.Used, d.Free = d.Size+size, d.Used+used, d.Free+free
+		for _, f := range fs[name] {
+			if size, used, free, err := statfs(f.point); err == nil {
+				part := func(n uint64) uint64 { return uint64(float64(n) * f.share) }
+				d.Size, d.Used, d.Free = d.Size+part(size), d.Used+part(used), d.Free+part(free)
 			}
 		}
 		c := cur[name]
