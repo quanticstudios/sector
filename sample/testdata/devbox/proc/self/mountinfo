@@ -1,0 +1,10 @@
+22 1 0:31 /@ / rw,relatime shared:1 - btrfs /dev/mapper/cryptroot rw,subvol=/@
+23 22 0:21 / /proc rw,nosuid shared:5 - proc proc rw
+24 22 0:24 / /tmp rw,nosuid shared:6 - tmpfs tmpfs rw
+25 22 259:1 / /boot rw,relatime shared:7 - vfat /dev/nvme0n1p1 rw
+26 22 0:31 /@home /home rw,relatime shared:8 - btrfs /dev/mapper/cryptroot rw,subvol=/@home
+27 22 0:31 /@log /var/log rw,relatime shared:9 - btrfs /dev/mapper/cryptroot rw,subvol=/@log
+28 22 0:45 /data /srv/data rw,relatime shared:10 - btrfs /dev/nvme1n1p1 rw,subvol=/data
+29 26 0:45 /projects /home/dev/my\040projects rw,relatime shared:11 - btrfs /dev/nvme1n1p1 rw,subvol=/projects
+30 22 7:0 / /snap/web-app/1 ro,relatime shared:12 - squashfs /dev/loop0 ro
+31 22 0:50 / /var/lib/docker/overlay2/abc/merged rw shared:13 - overlay overlay rw
