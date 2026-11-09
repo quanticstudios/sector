@@ -37,6 +37,7 @@ type Group struct {
 	RSS     uint64
 	Threads int    // threads in the group
 	Procs   []Proc // members, busiest first
+	Folded  int    // for Other: how many App and System groups folded into it
 }
 
 // Table is one scan, grouped.
