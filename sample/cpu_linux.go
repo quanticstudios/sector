@@ -142,18 +142,24 @@ func readTopology() (cores []Core, dies []Die, diePkg []int) {
 func cmpPair(a, b [2]int) int { return cmp.Or(cmp.Compare(a[0], b[0]), cmp.Compare(a[1], b[1])) }
 
 // readTemps fills each die's temperature from hwmon. AMD k10temp reports
-// Tccd1, Tccd2... which map to dies in order; dies without one get Tdie, else
-// Tctl. Intel coretemp reports "Package id N" for package N.
+// Tccd1, Tccd2... which map to dies in order, one k10temp per package in
+// hwmon number order; dies without one get Tdie, else Tctl. Intel coretemp
+// reports "Package id N" for package N.
 func readTemps(dies []Die, diePkg []int) {
 	type ccd struct {
-		n int
-		c float64
+		dev, n int // hwmon position, Tccd number
+		c      float64
 	}
 	var ccds []ccd
 	var tdie, tctl float64
 	pkg := map[int]float64{}
 	dirs, _ := filepath.Glob(filepath.Join(sysRoot, "class/hwmon/hwmon*"))
-	for _, d := range dirs {
+	num := func(d string) int {
+		n, _ := strconv.Atoi(strings.TrimPrefix(filepath.Base(d), "hwmon"))
+		return n
+	}
+	slices.SortFunc(dirs, func(a, b string) int { return cmp.Compare(num(a), num(b)) })
+	for i, d := range dirs {
 		if name := readStr(filepath.Join(d, "name")); name != "k10temp" && name != "coretemp" {
 			continue
 		}
@@ -167,7 +173,7 @@ func readTemps(dies []Die, diePkg []int) {
 			switch label := readStr(l); {
 			case strings.HasPrefix(label, "Tccd"):
 				n, _ := strconv.Atoi(label[4:])
-				ccds = append(ccds, ccd{n, c})
+				ccds = append(ccds, ccd{i, n, c})
 			case label == "Tdie":
 				tdie = c
 			case label == "Tctl":
@@ -178,7 +184,7 @@ func readTemps(dies []Die, diePkg []int) {
 			}
 		}
 	}
-	slices.SortFunc(ccds, func(a, b ccd) int { return cmp.Compare(a.n, b.n) })
+	slices.SortFunc(ccds, func(a, b ccd) int { return cmp.Or(cmp.Compare(a.dev, b.dev), cmp.Compare(a.n, b.n)) })
 	fallback := cmp.Or(tdie, tctl)
 	for i := range dies {
 		t, ok := pkg[diePkg[i]]
