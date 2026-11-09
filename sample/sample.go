@@ -60,7 +60,9 @@ type Drive struct {
 	Model  string   // /sys/block/<name>/device/model, may be empty
 	Mounts []string // mount points from this drive, btrfs subvolumes folded in, "/" first
 	// Size, Used and Free cover the filesystems on the drive, each counted
-	// once however many subvolumes mount it.
+	// once however many subvolumes mount it. A volume over several drives
+	// (LVM) lists its mounts on each and counts there by that drive's share
+	// of the volume's underlying partition sizes.
 	Size, Used, Free  uint64
 	ReadBps, WriteBps float64 // bytes per second
 	Busy              float64 // share of the interval with I/O in flight, 0 to 1
