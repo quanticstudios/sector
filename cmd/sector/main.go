@@ -3,6 +3,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -17,7 +19,13 @@ import (
 	"github.com/quanticstudios/sector/view"
 )
 
+var (
+	demoFlag = flag.Bool("demo", false, "show a made-up busy machine instead of this one")
+	sizeFlag = flag.String("size", "1440x900", "window size in dp, WxH")
+)
+
 func main() {
+	flag.Parse()
 	go func() {
 		if err := run(); err != nil {
 			log.Fatal(err)
@@ -34,10 +42,26 @@ type reading struct {
 
 func run() error {
 	w := new(app.Window)
-	w.Option(app.Title("sector"), app.Size(unit.Dp(1440), unit.Dp(900)))
+	var ww, wh float32
+	if _, err := fmt.Sscanf(*sizeFlag, "%gx%g", &ww, &wh); err != nil || ww <= 0 || wh <= 0 {
+		return fmt.Errorf("-size %q: want WxH, like 1440x900", *sizeFlag)
+	}
+	w.Option(app.Title("sector"), app.Size(unit.Dp(ww), unit.Dp(wh)))
 	v := view.New(theme.Dark())
 	readings := make(chan reading, 1)
-	go sampleLoop(w, v, readings)
+	read := machine()
+	if *demoFlag {
+		d := newDemo()
+		// Fill the last minute so the graphs start full.
+		now := time.Now()
+		for i := 60; i > 0; i-- {
+			s, t := d.next()
+			s.Time = now.Add(-time.Duration(i) * time.Second)
+			v.Push(s, t)
+		}
+		read = func() reading { s, t := d.next(); return reading{s, t} }
+	}
+	go sampleLoop(w, v, read, readings)
 	var ops op.Ops
 	for {
 		switch e := w.Event().(type) {
@@ -56,26 +80,34 @@ func run() error {
 	}
 }
 
-// sampleLoop reads the machine every interval and wakes the window. The
-// interval and pause are read from v between samples; a stale read only
-// delays the change by one tick.
-func sampleLoop(w *app.Window, v *view.View, out chan reading) {
+// machine reads this machine's counters and processes.
+func machine() func() reading {
 	smp, scn := sample.New(), procs.NewScanner()
+	return func() reading {
+		s, err := smp.Sample()
+		if err != nil {
+			log.Printf("sample: %v", err)
+		}
+		t, err := scn.Scan()
+		if err != nil {
+			log.Printf("procs: %v", err)
+		}
+		return reading{s, t}
+	}
+}
+
+// sampleLoop calls read every interval and wakes the window. The interval
+// and pause are read from v between samples; a stale read only delays the
+// change by one tick.
+func sampleLoop(w *app.Window, v *view.View, read func() reading, out chan reading) {
 	for {
 		if !v.Paused() {
-			s, err := smp.Sample()
-			if err != nil {
-				log.Printf("sample: %v", err)
-			}
-			t, err := scn.Scan()
-			if err != nil {
-				log.Printf("procs: %v", err)
-			}
+			r := read()
 			select {
 			case <-out:
 			default:
 			}
-			out <- reading{s, t}
+			out <- r
 			w.Invalidate()
 		}
 		time.Sleep(v.Interval())
