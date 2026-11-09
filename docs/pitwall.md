@@ -19,7 +19,7 @@ on it, and if one moved, follow the code, not this guide.
 | ----------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `github.com/quanticstudios/sector/sample` | daemon                | `sample.New()` returns a `*Sampler`. Each `Sample()` returns a `Snapshot`: CPU per thread with core and die layout, temperatures, memory, drives, network. Rates cover the time since the previous call, so the first one reports zero rates.    |
 | `github.com/quanticstudios/sector/procs`  | daemon                | `procs.NewScanner()` returns a `*Scanner`. Each `Scan()` returns a `Table`: processes grouped by coding agent, repo and app, busiest first, "Everything else" last.                                                                              |
-| `github.com/quanticstudios/sector/view`   | GUI                   | `view.New(th)` returns a `*View`, a Gio widget with no window of its own. The host calls `Push(snapshot, table)` for each reading and `Layout(gtx)` each frame. `Interval()` and `Paused()` report what the user picked in the view's title bar. |
+| `github.com/quanticstudios/sector/view`   | GUI                   | `view.NewWith(th, view.Options{Embedded: true})` returns a `*View`, a Gio widget with no window of its own. The host calls `Push(snapshot, table)` for each reading and `Layout(gtx)` each frame. `Interval()` and `Paused()` report what the user picked in the view's title bar. `SetLabels`, `Clicked` and `SetStale` are described under "The tab". |
 | `github.com/quanticstudios/sector/theme`  | GUI                   | `theme.Theme`, the palette and shaper the view draws with.                                                                                                                                                                                       |
 
 `sample` and `procs` read Linux's `/proc` and `/sys`. On other systems
@@ -262,6 +262,34 @@ modeled on `internal/ui/app/chat.go`:
 - Without a `Monitorer`, or with an `Err`, draw a centered line with `para`,
   as `layoutChat` does: "Monitor needs Linux on box", or the error text.
 
+Make each view with `view.NewWith(st, view.Options{Embedded: true})`.
+`Embedded` leaves sector's mark and name out of the title bar, so the bar
+starts with the host chip: the machine's name, CPU model, threads, memory,
+its own clock and uptime. `view.New(th)` is the standalone window's and
+draws the mark.
+
+Call every `View` method from the window's goroutine, the one that calls
+`Layout`. Only `Interval` and `Paused` are safe from another goroutine.
+
+- `v.SetLabels(m)` names groups by `Group.Key`. A label replaces the
+  group's "repo, agent" in the CPU legend and the hover tooltip, and its
+  bold name in the process table, where the branch and the agent stay
+  beside it. The filter matches labels too. Build `m` each frame from
+  `MonitorSample.Tabs`: for each group key, the pane's `WorkspaceID`, then
+  that workspace's `Label`. The view copies `m`, so pass a new map when a
+  tab is renamed or an agent comes or goes. `SetLabels(nil)` clears them.
+- `v.Clicked()` returns the `Group.Key` of the group row the user clicked
+  in the process table since the last call, once per click. Call it after
+  `Layout`. The click also opens or closes the row, as in sector's own
+  window. When the key is in `Tabs`, focus that tab with
+  `u.queueFocus(proto.FocusSession{WorkspaceID: ..., Pane: paneID})`
+  (`internal/ui/app/app.go`). A click on any other row needs nothing.
+- `v.SetStale(since)` dims every graph and writes "No data since 20:41"
+  over the CPU graph, with `since` shown on the sampled machine's clock.
+  The graphs already stand still without a `Push`, since they end at the
+  last sample. The next `Push` clears it, and so does `SetStale(time.Time{})`.
+  See "Remote machines" for when to call it.
+
 ### Interval and pause
 
 The view's title bar has an interval control (1, 2 or 5 s) and a pause
@@ -336,16 +364,24 @@ tabs, or the user is stuck in the field. A Monitor tab has no pane, so no
   release that removes a field must not be taken.
 - Unreachable box. `multi` keeps a down host's last state on screen and
   retries with backoff (`docs/remote.md`). Keep box's view with its last
-  sample, and draw a strip over its title bar from the host's `Link`:
-  "Offline, retry in 7s", or the link's `Note`. On reconnect the `Epoch`
-  changes, the window sends its watch again and samples resume. The gap
-  shows as a straight line in the graphs. Never block the desktop's tab on
-  box.
-- Clock skew. `Snapshot.Time` is box's clock. The view's graphs only
-  compare samples from one machine, so they are fine. Its title bar adds
-  the desktop's `time.Now()` minus `Snapshot.Time` to box's uptime, so a
-  skewed clock shows a slightly wrong uptime. The clock in the title bar
-  shows the desktop's time. Both are known gaps; see "Follow-ups in sector".
+  sample. Note the local `time.Now()` each time a `MonitorSample` arrives,
+  and call `v.SetStale(thatTime)` once the host's `Link.State` is no
+  longer `app.LinkUp`, or no sample has come for three intervals while the
+  view is not paused. The sidebar's machine line already says "offline,
+  retry in 7s". On reconnect the `Epoch` changes, the window sends its
+  watch again, and the first `Push` clears the stale state. The gap shows
+  as a straight line in the graphs. Never block the desktop's tab on box.
+- Clocks and time zones. The host chip shows the sampled machine's own
+  clock and uptime. `sample` stamps `Snapshot.Time` with `time.Now()` in
+  that machine's local zone. gob keeps the time's UTC offset, though not
+  the zone's name, so box's sample arrives in box's offset. The view shows
+  `Snapshot.Time` in that offset, run on by the desktop's clock since the
+  `Push`, and adds the same time to `Host.Uptime`. A desktop in Berlin
+  watching box in Tokyo shows Tokyo's time on box's tab. A clock that is
+  off on box shows as off, which is what box's own `date` says. A daylight
+  saving change on box shows from the first sample after it. A host that
+  pushes a UTC time shows UTC. The graphs only compare samples from one
+  machine, so skew between the machines does not bend them.
 - Ask the user before any live check against box. It runs a daemon on a
   real server and loads agents' machines.
 
@@ -425,43 +461,21 @@ will not notice gets the `no-changelog` label from a maintainer instead.
    client never sees it, and it survives a daemon restart.
 3. **The Monitor tab in the window.** `internal/ui/app/monitor.go`,
    `Monitorer` on `backend` and `multi`, the theme bridge, the watch on
-   show, hide, interval, pause and `Epoch` change, the offline strip, the
-   older-daemon notice, and the palette and menu entries. Add a CHANGELOG
+   show, hide, interval, pause and `Epoch` change, `SetStale` while the
+   host is down, the older-daemon notice, and the palette and menu entries. Add a CHANGELOG
    line and a section in `docs/usage.md`, with a line in `docs/remote.md`.
    Done when `pwdemo-app` shows the tab in `agent-ws`, a throwaway daemon's
    tab shows live data, switching away stops sampling (no sampler
    goroutine in the daemon's log or stack dump), and the screenshots are
    attached.
-4. **Agent labels.** Needs the sector follow-up below and a sector tag that
-   carries it. Pass `Tabs`, resolved to tab labels, to the view, and make a
-   click on an agent group focus its tab. Done when an agent started in a
+4. **Agent labels.** Needs a sector release with `SetLabels` and
+   `Clicked`, v0.1.0 or later. Pass `Tabs`, resolved to tab labels, to
+   `SetLabels`, and focus the tab `Clicked` names. Done when an agent started in a
    pane shows its tab's label in the process table and the CPU graph's
-   legend, and an agent started outside pitwall shows none.
+   legend, a click on that row focuses the tab, and an agent started
+   outside pitwall keeps its repo and agent name.
 5. **Remote check.** With the user's go-ahead, after a release is on box:
    open box's Monitor tab from the desktop. Compare its thread count and
    memory with `ssh box nproc` and `ssh box free -b`. Drop the link
-   (`ssh -O exit` on the control socket) and watch the offline strip and the
+   (`ssh -O exit` on the control socket) and watch "No data since" and the
    recovery. Report the result in the pull request of step 4 or in an issue.
-
-## Follow-ups in sector
-
-These need changes in sector's `view` package before step 4, or to close
-the gaps above. Ask the sector maintainers for them and a new tag. Don't
-work around them in pitwall.
-
-- Labels for groups. The view names an agent group from its repo and
-  agent (`groupLabel` in `view/history.go`) and has no way to show a
-  host's name for it. It needs something like `SetLabels(map[string]string)`
-  keyed by `Group.Key`.
-- A clicked group. The process panel has no way to report a click, so
-  pitwall cannot focus the agent's tab. It needs something like
-  `Clicked() (key string, ok bool)`.
-- Remote uptime and clock. The title bar extrapolates uptime with the
-  local clock and shows local time. A remote machine wants uptime from
-  `Host.Uptime` alone, and no clock or the remote's.
-- Stale data. The view cannot say its data is old. Either it gets
-  `SetStale(since time.Time)`, or pitwall draws the strip over it, as
-  described above.
-- Branding. The title bar draws sector's mark and name. Inside a pitwall
-  tab, an option to hide them, or to show the host name in their place,
-  would fit pitwall's chrome better.

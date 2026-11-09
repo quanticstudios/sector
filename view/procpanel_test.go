@@ -42,8 +42,8 @@ func ppKeys(gs []procs.Group) string {
 
 func TestPPMatch(t *testing.T) {
 	g := ppFixture().Groups[0]
-	for f, want := range map[string]bool{"": true, "ACME": true, "fix/LOG": true, "Claude": true, "chromium": false} {
-		if got := ppMatch(g, f); got != want {
+	for f, want := range map[string]bool{"": true, "ACME": true, "fix/LOG": true, "Claude": true, "chromium": false, "login FLOW": true} {
+		if got := ppMatch(g, "Login flow", f); got != want {
 			t.Errorf("ppMatch(%q) = %v, want %v", f, got, want)
 		}
 	}
@@ -165,7 +165,7 @@ func TestPPMergeSumsSameComm(t *testing.T) {
 func TestPPOtherShowsFolded(t *testing.T) {
 	for folded, want := range map[int]string{0: "", 1: "1 group", 31: "31 groups", 1200: "1,200 groups"} {
 		g := procs.Group{Kind: procs.Other, Name: "Everything else", Folded: folded}
-		if name, _, kind := ppLabels(g); name != "Everything else" || kind != want {
+		if name, _, kind := ppLabels(g, ""); name != "Everything else" || kind != want {
 			t.Errorf("Folded %d: %q %q, want kind %q", folded, name, kind, want)
 		}
 	}

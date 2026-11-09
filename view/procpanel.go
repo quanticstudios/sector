@@ -34,7 +34,9 @@ type ProcPanel struct {
 	hovers   map[string]*gesture.Hover    // member rows, by Group.Key and comm
 	heads    [ppNumCols]widget.Clickable
 	list     widget.List
-	threads  int // the machine's logical CPUs, what 100% CPU stands for
+	threads  int               // the machine's logical CPUs, what 100% CPU stands for
+	labels   map[string]string // the host's names for groups, by Group.Key
+	clicked  string            // the last group row clicked, until View.Clicked takes it
 }
 
 // ppCol is a numeric column. Its zero value, CPU, keeps the table's own
@@ -70,11 +72,11 @@ func ppCols(width unit.Dp) []ppCell {
 	return []ppCell{{ppProcs, "Procs", 64}, {ppThreads, "Threads", 76}, {ppCPU, "CPU", 104}, {ppMem, "Memory", 84}}
 }
 
-// ppMatch reports whether g's name, agent, repo or branch contains filter,
-// ignoring case. An empty filter matches every group.
-func ppMatch(g procs.Group, filter string) bool {
+// ppMatch reports whether g's label, name, agent, repo or branch contains
+// filter, ignoring case. An empty filter matches every group.
+func ppMatch(g procs.Group, label, filter string) bool {
 	f := strings.ToLower(filter)
-	for _, s := range []string{g.Name, g.Agent, g.Repo, g.Branch} {
+	for _, s := range []string{label, g.Name, g.Agent, g.Repo, g.Branch} {
 		if strings.Contains(strings.ToLower(s), f) {
 			return true
 		}
@@ -180,7 +182,7 @@ func ppBarScale(busiest float64) float64 {
 func (p *ProcPanel) rows(t procs.Table, filter string) []ppRow {
 	var rows []ppRow
 	for _, g := range ppSorted(t.Groups, p.sort) {
-		if !ppMatch(g, filter) {
+		if !ppMatch(g, p.labels[g.Key], filter) {
 			continue
 		}
 		g := g
@@ -264,6 +266,7 @@ func (p *ProcPanel) Layout(gtx layout.Context, th *theme.Theme, t procs.Table, f
 	for key, c := range p.clicks {
 		for c.Clicked(gtx) {
 			p.toggle(key)
+			p.clicked = key
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
@@ -477,7 +480,7 @@ func (p *ProcPanel) row(d *ppDraw, r ppRow) layout.Dimensions {
 		x += gtx.Dp(8 + 7)
 		ppIcon(gtx, th, *g, image.Pt(x, (h-gtx.Dp(14))/2), gtx.Dp(14))
 		x += gtx.Dp(14 + 7)
-		name, branch, kind := ppLabels(*g)
+		name, branch, kind := ppLabels(*g, p.labels[g.Key])
 		nameFg := th.Fg
 		if g.Kind == procs.Other {
 			nameFg = th.Muted
@@ -533,7 +536,16 @@ func (p *ProcPanel) row(d *ppDraw, r ppRow) layout.Dimensions {
 
 // ppLabels is a group row's bold name, its branch (drawn in mono) and a
 // quiet kind word after them: "acme-api fix/login claude", "Chromium app".
-func ppLabels(g procs.Group) (name, branch, kind string) {
+// A host's label takes the name's place, and an agent keeps its name as
+// the kind word.
+func ppLabels(g procs.Group, label string) (name, branch, kind string) {
+	if label != "" {
+		_, branch, kind = ppLabels(g, "")
+		if g.Kind == procs.Agent {
+			kind = g.Agent
+		}
+		return label, branch, kind
+	}
 	switch g.Kind {
 	case procs.Agent:
 		if g.Repo == "" {
