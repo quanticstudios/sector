@@ -1,0 +1,6 @@
+/.worktrees/
+/sector
+/dist/
+*.test
+/coverage.out
+.DS_Store
