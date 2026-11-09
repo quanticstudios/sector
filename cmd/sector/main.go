@@ -19,13 +19,21 @@ import (
 	"github.com/quanticstudios/sector/view"
 )
 
+// version is set at build time with -ldflags "-X main.version=v0.1.0".
+var version = "dev"
+
 var (
-	demoFlag = flag.Bool("demo", false, "show a made-up busy machine instead of this one")
-	sizeFlag = flag.String("size", "1440x900", "window size in dp, WxH")
+	versionFlag = flag.Bool("version", false, "print the version and exit")
+	demoFlag    = flag.Bool("demo", false, "show a made-up busy machine instead of this one")
+	sizeFlag    = flag.String("size", "1440x900", "window size in dp, WxH")
 )
 
 func main() {
 	flag.Parse()
+	if *versionFlag {
+		fmt.Println("sector", version)
+		return
+	}
 	go func() {
 		if err := run(); err != nil {
 			log.Fatal(err)

@@ -1,0 +1,92 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  GOFLAGS: -tags=novulkan
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a commit on main
+        run: git merge-base --is-ancestor HEAD origin/main
+
+  build:
+    needs: verify
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          # why: Ubuntu 22.04's glibc 2.35 also runs on Debian 12; a 24.04 build needs glibc 2.39.
+          - { goarch: amd64, runner: ubuntu-22.04 }
+          # why: Gio needs cgo on Linux, so arm64 builds on a native arm64 runner instead of cross-compiling.
+          - { goarch: arm64, runner: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: Install Gio's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles-dev libegl-dev libffi-dev libxcursor-dev libxfixes-dev
+      - name: Build and pack
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '1'
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p stage dist
+          go build -trimpath -ldflags "-X main.version=$TAG" -o stage/sector ./cmd/sector
+          test "$(stage/sector --version)" = "sector $TAG"
+          cp README.md LICENSE theme/fonts/OFL.txt stage/
+          tar -czf "dist/sector_${TAG#v}_linux_${GOARCH}.tar.gz" -C stage sector README.md LICENSE OFL.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: sector_linux_${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          (cd dist && sha256sum sector_* > checksums.txt && cat checksums.txt)
+          awk -v tag="$TAG" '$0 == "## " tag {on=1; next} on && /^## / {exit} on' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md has no section '## $TAG'" >&2
+            exit 1
+          fi
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --title "sector $TAG" --notes-file notes.md --verify-tag --latest

@@ -20,6 +20,18 @@ mise install
 GOFLAGS=-tags=novulkan go run ./cmd/sector
 ```
 
+## Install
+
+Each release on GitHub has a `sector_<version>_linux_<arch>.tar.gz` for
+amd64 and arm64 with the binary inside. To build from a checkout instead:
+
+```sh
+sh scripts/install.sh
+```
+
+It builds `~/.local/bin/sector`, stamped with `git describe`, and adds a
+sector entry to your app launcher. `sector --version` prints the version.
+
 ## Packages
 
 | Package      | Owns                                                           |
