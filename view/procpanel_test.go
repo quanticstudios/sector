@@ -3,8 +3,11 @@ package view
 import (
 	"image"
 	"image/color"
+	"math"
+	"strconv"
 	"testing"
 
+	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -16,7 +19,7 @@ import (
 func ppFixture() procs.Table {
 	kids := make([]procs.Proc, 15)
 	for i := range kids {
-		kids[i] = procs.Proc{PID: 100 + i, Comm: "node", Threads: 4}
+		kids[i] = procs.Proc{PID: 100 + i, Comm: "w" + strconv.Itoa(i), Threads: 4}
 	}
 	return procs.Table{
 		Groups: []procs.Group{
@@ -121,5 +124,77 @@ func TestPPLayoutDraws(t *testing.T) {
 			t.Errorf("size %v, want %v", dims.Size, size)
 		}
 		p.Layout(gtx, th, ppFixture(), "nothing", nil)
+	}
+}
+
+func TestPPMergeSumsSameComm(t *testing.T) {
+	ps := []procs.Proc{
+		{PID: 11, Comm: "claude", Cores: 0.6, Threads: 45, RSS: 400},
+		{PID: 12, Comm: "vitest", Cores: 0.5, Threads: 14, RSS: 100},
+		{PID: 13, Comm: "node", Cores: 0.4, Threads: 20, RSS: 50},
+		{PID: 14, Comm: "vitest", Cores: 0.5, Threads: 14, RSS: 100},
+		{PID: 15, Comm: "vitest", Cores: 0.5, Threads: 14, RSS: 100},
+	}
+	got := ppMerge(ps)
+	want := []ppKid{
+		{Comm: "vitest", PID: 12, N: 3, Threads: 42, Cores: 1.5, RSS: 300},
+		{Comm: "claude", PID: 11, N: 1, Threads: 45, Cores: 0.6, RSS: 400},
+		{Comm: "node", PID: 13, N: 1, Threads: 20, Cores: 0.4, RSS: 50},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if n := ppKidNote(got[0]); n != "3 workers" {
+		t.Errorf("merged note = %q", n)
+	}
+	if n := ppKidNote(got[1]); n != "11" {
+		t.Errorf("single note = %q, want its pid", n)
+	}
+}
+
+func TestPPOtherShowsFolded(t *testing.T) {
+	for folded, want := range map[int]string{0: "", 1: "1 group", 31: "31 groups", 1200: "1,200 groups"} {
+		g := procs.Group{Kind: procs.Other, Name: "Everything else", Folded: folded}
+		if name, _, kind := ppLabels(g); name != "Everything else" || kind != want {
+			t.Errorf("Folded %d: %q %q, want kind %q", folded, name, kind, want)
+		}
+	}
+}
+
+func TestPPBarScale(t *testing.T) {
+	for _, c := range []struct{ busiest, want float64 }{
+		{0, 2}, {0.3, 2}, {2, 2}, {2.1, 5}, {8.4, 10}, {10, 10}, {10.1, 20}, {31, 50}, {math.NaN(), 2},
+	} {
+		if got := ppBarScale(c.busiest); got != c.want {
+			t.Errorf("ppBarScale(%v) = %v, want %v", c.busiest, got, c.want)
+		}
+	}
+}
+
+func TestPPSVGPoints(t *testing.T) {
+	subs := ppSVGPoints("M1 2l1.3.9-3 1H4v-2ZM3 3h1")
+	if len(subs) != 2 || !subs[0].closed || subs[1].closed {
+		t.Fatalf("got %+v", subs)
+	}
+	got := subs[0].pts
+	want := []f32.Point{{X: 1, Y: 2}, {X: 2.3, Y: 2.9}, {X: -0.7, Y: 3.9}, {X: 4, Y: 3.9}, {X: 4, Y: 1.9}}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if d := got[i].Sub(want[i]); math.Abs(float64(d.X)) > 1e-4 || math.Abs(float64(d.Y)) > 1e-4 {
+			t.Errorf("point %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+	if p := subs[1].pts; len(p) != 2 || p[1] != (f32.Point{X: 4, Y: 3}) {
+		t.Errorf("relative h: got %v, want a line to (4, 3)", p)
+	}
+	if n := len(ppSVGPoints(ppClaudeD)); n != 1 {
+		t.Errorf("claude mark parses to %d subpaths, want 1", n)
 	}
 }

@@ -13,3 +13,12 @@ func TestHexAndMix(t *testing.T) {
 		t.Fatal("no shaper")
 	}
 }
+
+func TestLoadMonoFallsBack(t *testing.T) {
+	if f := loadMono([]string{"/nonexistent/mono.ttf"}); f != nil {
+		t.Fatalf("loadMono of a missing file = %v, want nil", f)
+	}
+	if m := Dark().Mono.Typeface; m != "JetBrains Mono" && m != "Go Mono" {
+		t.Fatalf("Mono = %q", m)
+	}
+}
