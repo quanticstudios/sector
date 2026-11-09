@@ -39,6 +39,15 @@ jobs:
           fi
       - run: go vet ./...
       - run: go test -race -timeout 5m ./...
+      - name: Scripts
+        run: |
+          # why: the runner's sh is dash, as on Ubuntu machines that run get.sh; bash is the other common sh.
+          test "$(readlink -f /bin/sh)" = /usr/bin/dash
+          for f in scripts/*.sh; do sh -n "$f"; bash -n "$f"; done
+          for shell in sh bash; do
+            "$shell" scripts/get_test.sh
+            "$shell" scripts/release_test.sh
+          done
 
   changelog:
     if: github.event_name == 'pull_request'
