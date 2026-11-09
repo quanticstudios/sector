@@ -43,7 +43,7 @@ jobs:
       - name: Install Gio's build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles-dev libegl-dev libffi-dev libxcursor-dev libxfixes-dev
+          sudo apt-get install -y --no-install-recommends gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles-dev libegl-dev libffi-dev libxcursor-dev libxfixes-dev librsvg2-bin
       - name: Build and pack
         env:
           GOARCH: ${{ matrix.goarch }}
@@ -54,7 +54,9 @@ jobs:
           go build -trimpath -ldflags "-X main.version=$TAG" -o stage/sector ./cmd/sector
           test "$(stage/sector --version)" = "sector $TAG"
           cp README.md LICENSE theme/fonts/OFL.txt stage/
-          tar -czf "dist/sector_${TAG#v}_linux_${GOARCH}.tar.gz" -C stage sector README.md LICENSE OFL.txt
+          # why: scripts/get.sh installs this icon with the desktop entry.
+          rsvg-convert -w 256 -h 256 -o stage/icon.png assets/logo.svg
+          tar -czf "dist/sector_${TAG#v}_linux_${GOARCH}.tar.gz" -C stage sector icon.png README.md LICENSE OFL.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: sector_linux_${{ matrix.goarch }}
