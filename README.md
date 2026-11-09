@@ -20,6 +20,31 @@ mise install
 GOFLAGS=-tags=novulkan go run ./cmd/sector
 ```
 
+## Install
+
+On Linux (amd64 or arm64), this installs the latest release into
+`~/.local/bin/sector`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/quanticstudios/sector/main/scripts/get.sh | sh
+```
+
+It checks the download against the release's `checksums.txt`. On a machine
+with a graphical session it also adds sector to your app launcher. If Gio's
+libraries (Wayland, X11, xkbcommon, EGL) are missing, it prints the apt and
+pacman packages to install, and installs none itself. Set
+`SECTOR_VERSION=v0.1.0` to pin a version and `SECTOR_INSTALL_DIR` to install
+somewhere else, as in `curl ... | SECTOR_VERSION=v0.1.0 sh`.
+
+To build from a checkout instead:
+
+```sh
+sh scripts/install.sh
+```
+
+It builds `~/.local/bin/sector`, stamped with `git describe`, and adds a
+sector entry to your app launcher. `sector --version` prints the version.
+
 ## Packages
 
 | Package      | Owns                                                           |

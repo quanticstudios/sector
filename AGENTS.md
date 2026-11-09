@@ -34,3 +34,10 @@ them as written; if one is wrong, say so in your report instead of changing it.
 - Commits are authored `Quantic Studios <info@quanticstudios.io>`, no
   trailers. Fictional names in fixtures (`acme-api`, `web-app`, user `dev`).
 - Every change reaches `main` through a pull request.
+- A change to `cmd/`, `sample/`, `procs/`, `view/` or `theme/` adds a
+  user-facing line under `## Unreleased` in `CHANGELOG.md`; CI fails without
+  one unless the PR has the `no-changelog` label.
+- Releases are `v0.1.N` tags on `main`, cut only with
+  `sh scripts/release.sh` and then `sh scripts/release.sh --tag` (see
+  "To cut a release" in `CHANGELOG.md`). Never tag or push a tag by hand.
+  `sh scripts/release_test.sh` passes after any change to `release.sh`.
