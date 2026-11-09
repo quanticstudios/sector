@@ -3,16 +3,12 @@ package view
 import (
 	"fmt"
 	"image"
-	"image/color"
 	"math"
 	"strconv"
 
-	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 
 	"github.com/quanticstudios/sector/sample"
 	"github.com/quanticstudios/sector/theme"
@@ -218,7 +214,7 @@ func (v *View) tile(gtx layout.Context, r image.Rectangle, load float64) {
 	t.Pop()
 }
 
-// loadFooter is the load average and the color key.
+// loadFooter is the load average.
 func (v *View) loadFooter(gtx layout.Context) layout.Dimensions {
 	th := v.th
 	label := "Load average, 1 · 5 · 15 min"
@@ -226,28 +222,6 @@ func (v *View) loadFooter(gtx layout.Context) layout.Dimensions {
 		label = "Load"
 	}
 	l := v.last.Host.Load
-	return spread(gtx, v.text(theme.Size12, font.Normal, th.Muted, label), func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Alignment: layout.Baseline, Gap: gtx.Dp(16)}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return v.rich(gtx, theme.Size12, span{s: "0", c: th.TextQuiet}, span{mark: v.heatKey}, span{s: "100%", c: th.TextQuiet})
-			}),
-			layout.Rigid(v.text(theme.Size12, font.Normal, th.Fg, fmt.Sprintf("%.1f · %.1f · %.1f", l[0], l[1], l[2]))),
-		)
-	})
-}
-
-// heatKey is the green to yellow to red key, 56 by 6 dp.
-func (v *View) heatKey(gtx layout.Context) layout.Dimensions {
-	th := v.th
-	w, h := gtx.Dp(56), gtx.Dp(6)
-	defer clip.UniformRRect(image.Rect(0, 0, w, h), h/2).Push(gtx.Ops).Pop()
-	for i, s := range [][2]color.NRGBA{{th.Green, th.Yellow}, {th.Yellow, th.Red}} {
-		x0, x1 := float32(w*i/2), float32(w*(i+1)/2)
-		half := clip.Rect{Min: image.Pt(int(x0), 0), Max: image.Pt(int(x1), h)}.Push(gtx.Ops)
-		paint.LinearGradientOp{Stop1: f32.Pt(x0, 0), Color1: s[0], Stop2: f32.Pt(x1, 0), Color2: s[1]}.Add(gtx.Ops)
-		paint.PaintOp{}.Add(gtx.Ops)
-		half.Pop()
-	}
-	// The bar sits 2 dp over the baseline, centered on the digits.
-	return layout.Dimensions{Size: image.Pt(w, h+gtx.Dp(2))}
+	return spread(gtx, v.text(theme.Size12, font.Normal, th.Muted, label),
+		v.text(theme.Size12, font.Normal, th.Fg, fmt.Sprintf("%.1f · %.1f · %.1f", l[0], l[1], l[2])))
 }
