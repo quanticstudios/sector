@@ -25,3 +25,4 @@ the release build. Either step takes `--dry-run`.
 - `sector -demo` shows a made-up busy machine, for screenshots or a first look.
 - `curl -fsSL https://raw.githubusercontent.com/quanticstudios/sector/main/scripts/get.sh | sh` installs the latest release on Linux amd64 or arm64, with a launcher entry when there is a desktop, and names any missing libraries. `scripts/install.sh` builds and installs from a checkout. `sector --version` prints the version.
 - `procs.Group.PID` is an agent group's own process, and `docs/pitwall.md` explains how pitwall embeds sector to show a Monitor tab per machine.
+- Refreshes every 2 seconds by default, draws a taller network graph on wide windows, and keeps the clock, uptime and other live numbers in fixed-width digits so they no longer shift the title bar's controls or header text.
