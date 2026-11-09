@@ -37,6 +37,13 @@ jobs:
             printf 'gofmt needed:\n%s\n' "$unformatted"
             exit 1
           fi
+      - name: Module paths
+        # why: Go's module zip rejects ':' in file names, so go get fails for embedders.
+        run: |
+          if git ls-files | grep ':'; then
+            echo 'File names with a colon break go get for this module.'
+            exit 1
+          fi
       - run: go vet ./...
       - run: go test -race -timeout 5m ./...
       - name: Scripts
