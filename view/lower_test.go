@@ -32,3 +32,19 @@ func TestMainNet(t *testing.T) {
 		t.Fatalf("picked %s", n.Name)
 	}
 }
+
+func TestStackedCache(t *testing.T) {
+	for _, c := range []struct {
+		m    sample.Mem
+		want uint64
+	}{
+		{sample.Mem{Total: 60, Used: 25, Cached: 30}, 30}, // fits under Total
+		{sample.Mem{Total: 60, Used: 31, Cached: 31}, 29}, // shmem pushes the sum past Total
+		{sample.Mem{Total: 60, Used: 60, Cached: 5}, 0},
+		{sample.Mem{Total: 0, Used: 3, Cached: 5}, 0}, // no reading
+	} {
+		if got := stackedCache(c.m); got != c.want {
+			t.Errorf("%+v: stacked %d, want %d", c.m, got, c.want)
+		}
+	}
+}

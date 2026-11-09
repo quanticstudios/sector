@@ -114,6 +114,17 @@ func share(a, b uint64) float64 {
 
 func pct(f float64) string { return strconv.Itoa(int(math.Round(f*100))) + "%" }
 
+// stackedCache is how much of Cached the graph and bar stack on Used.
+// Used is Total minus Available, and Cached counts shmem and other pages
+// that are not reclaimable, so the two can add up past Total; the stack
+// stops at Total and the Cached row keeps the full number.
+func stackedCache(m sample.Mem) uint64 {
+	if m.Used >= m.Total {
+		return 0
+	}
+	return min(m.Cached, m.Total-m.Used)
+}
+
 // memCard is memory over the last minute, a bar of used and cached, the
 // four free(1) numbers and swap.
 func (v *View) memCard(gtx layout.Context) layout.Dimensions {
@@ -129,7 +140,7 @@ func (v *View) memCard(gtx layout.Context) layout.Dimensions {
 		w, h, g := gtx.Constraints.Max.X, gtx.Dp(8), gtx.Dp(2)
 		defer clip.UniformRRect(image.Rect(0, 0, w, h), gtx.Dp(3)).Push(gtx.Ops).Pop()
 		u := int(float64(w) * share(m.Used, m.Total))
-		c := int(float64(w) * share(m.Cached, m.Total))
+		c := int(float64(w) * share(stackedCache(m), m.Total))
 		rect(gtx, image.Rect(0, 0, u, h), 0, th.MemUsed)
 		rect(gtx, image.Rect(u+g, 0, min(w, u+g+c), h), 0, th.MemCache)
 		rect(gtx, image.Rect(min(w, u+c+2*g), 0, w, h), 0, cTrack)

@@ -69,7 +69,7 @@ func (v *View) Push(s sample.Snapshot, t procs.Table) {
 	}
 	v.last, v.table = s, t
 	e := entry{t: s.Time, cores: map[string]float64{}, drives: map[string][2]float64{}, nets: map[string][2]float64{},
-		used: float64(s.Mem.Used), cached: float64(s.Mem.Cached)}
+		used: float64(s.Mem.Used), cached: float64(stackedCache(s.Mem))}
 	live := map[string]bool{}
 	for _, g := range t.Groups {
 		e.cores[g.Key] += g.Cores
