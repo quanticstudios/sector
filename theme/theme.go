@@ -7,9 +7,12 @@ import (
 	_ "embed"
 	"image/color"
 	"log"
+	"os"
+	"sync"
 
 	"gioui.org/font"
 	"gioui.org/font/gofont"
+	"gioui.org/font/opentype"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -20,10 +23,12 @@ import (
 	ot "github.com/go-text/typesetting/font/opentype"
 )
 
-// Theme is one palette plus a shaper loaded with Geist.
+// Theme is one palette plus a shaper loaded with Geist and a mono face.
 type Theme struct {
 	Shaper *text.Shaper
 	Font   font.Font
+	// Mono is JetBrains Mono when the system has it, else Go Mono.
+	Mono font.Font
 
 	Bg, Surface, SurfaceSecondary, SurfaceElevated color.NRGBA
 	Border, Fg, Muted, Primary                     color.NRGBA
@@ -55,7 +60,7 @@ func Dark() *Theme {
 	}
 	t.BorderSubtle = Mix(t.Surface, t.Fg, 0.07)
 	t.TextQuiet = Mix(t.Bg, t.Muted, 0.85)
-	t.Shaper, t.Font = shaper()
+	t.Shaper, t.Font, t.Mono = shaper()
 	return t
 }
 
@@ -128,7 +133,38 @@ func (v varFace) Face() *fontapi.Face {
 	return fc
 }
 
-func shaper() (*text.Shaper, font.Font) {
+// monoPaths is where a system JetBrains Mono may live; the first that
+// parses wins.
+var monoPaths = []string{
+	"/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
+	"/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf",
+	"/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
+	"/usr/share/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf",
+}
+
+// monoFaces is the system JetBrains Mono, parsed once per process.
+var monoFaces = sync.OnceValue(func() []font.FontFace { return loadMono(monoPaths) })
+
+// loadMono parses the first of paths that holds a font, as typeface
+// "JetBrains Mono", or returns nil when none does.
+func loadMono(paths []string) []font.FontFace {
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		faces, err := opentype.ParseCollection(b)
+		if err != nil || len(faces) == 0 {
+			log.Printf("theme: %s: %v", p, err)
+			continue
+		}
+		faces[0].Font = font.Font{Typeface: "JetBrains Mono"}
+		return faces[:1]
+	}
+	return nil
+}
+
+func shaper() (*text.Shaper, font.Font, font.Font) {
 	var faces []font.FontFace
 	for _, w := range []font.Weight{font.Normal, font.Medium, font.SemiBold, font.Bold} {
 		ld, err := ot.NewLoader(bytes.NewReader(geistTTF))
@@ -147,6 +183,11 @@ func shaper() (*text.Shaper, font.Font) {
 	if len(faces) == 0 {
 		ui = font.Font{Typeface: "Go"}
 	}
+	mono := font.Font{Typeface: "Go Mono"}
+	if m := monoFaces(); m != nil {
+		faces = append(faces, m...)
+		mono = m[0].Font
+	}
 	faces = append(faces, gofont.Collection()...)
-	return text.NewShaper(text.NoSystemFonts(), text.WithCollection(faces)), ui
+	return text.NewShaper(text.NoSystemFonts(), text.WithCollection(faces)), ui, mono
 }

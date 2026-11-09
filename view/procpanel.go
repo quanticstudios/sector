@@ -17,6 +17,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
+	"gioui.org/widget/material"
 
 	"github.com/quanticstudios/sector/procs"
 	"github.com/quanticstudios/sector/theme"
@@ -29,7 +30,7 @@ type ProcPanel struct {
 	sort     ppCol
 	expanded map[string]bool              // by Group.Key, kept across tables
 	clicks   map[string]*widget.Clickable // group rows, by Group.Key
-	hovers   map[int]*gesture.Hover       // member rows, by pid
+	hovers   map[string]*gesture.Hover    // member rows, by Group.Key and comm
 	heads    [ppNumCols]widget.Clickable
 	list     widget.List
 }
@@ -109,12 +110,70 @@ func ppValue(g procs.Group, col ppCol) float64 {
 	return g.Cores
 }
 
-// ppRow is one line of the list: a group, one of its processes, or the
+// ppRow is one line of the list: a group, one of its member rows, or the
 // "+N more" line under a capped group.
 type ppRow struct {
 	g    *procs.Group
-	kid  *procs.Proc
-	more int
+	kid  *ppKid
+	more int // processes not listed
+}
+
+// ppKid is a member row: one process, or every process in the group with
+// that comm, summed.
+type ppKid struct {
+	Comm    string
+	PID     int // the process's pid; meaningful only when N is 1
+	N       int // processes in the row
+	Threads int
+	Cores   float64
+	RSS     uint64
+}
+
+// ppMerge folds ps into one row per comm, busiest first. Rows with equal
+// CPU keep the order their first process had in ps.
+func ppMerge(ps []procs.Proc) []ppKid {
+	at := map[string]int{}
+	var out []ppKid
+	for _, p := range ps {
+		i, ok := at[p.Comm]
+		if !ok {
+			i = len(out)
+			at[p.Comm] = i
+			out = append(out, ppKid{Comm: p.Comm, PID: p.PID})
+		}
+		k := &out[i]
+		k.N++
+		k.Threads += p.Threads
+		k.Cores += p.Cores
+		k.RSS += p.RSS
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Cores > out[j].Cores })
+	return out
+}
+
+// ppKidNote is the quiet text after a member row's comm: the pid of a
+// single process, else how many were merged, in the concept's words.
+func ppKidNote(k ppKid) string {
+	if k.N == 1 {
+		return strconv.Itoa(k.PID)
+	}
+	return ppFormatInt(k.N) + " workers"
+}
+
+// ppBarScale is the cores a full CPU bar stands for: the busiest group
+// rounded up to the next 2, 5 or 10 times a power of ten, never under 2.
+// The step keeps the scale still while load wobbles, the headroom keeps
+// the busiest bar short of full (8.4 cores draws against 10, as in the
+// concept), and the floor keeps an idle machine's bars near empty.
+func ppBarScale(busiest float64) float64 {
+	for p := 1.0; p < 1e6; p *= 10 {
+		for _, m := range []float64{2, 5, 10} {
+			if !(busiest > m*p) { // NaN lands on the floor
+				return m * p
+			}
+		}
+	}
+	return busiest
 }
 
 // rows flattens t into the lines to draw, after filter, sort and expansion.
@@ -129,12 +188,17 @@ func (p *ProcPanel) rows(t procs.Table, filter string) []ppRow {
 		if !p.expanded[g.Key] {
 			continue
 		}
-		for i := range g.Procs {
+		kids := ppMerge(g.Procs)
+		for i := range kids {
 			if i == ppKidCap {
-				rows = append(rows, ppRow{g: &g, more: len(g.Procs) - ppKidCap})
+				n := 0
+				for _, k := range kids[i:] {
+					n += k.N
+				}
+				rows = append(rows, ppRow{g: &g, more: n})
 				break
 			}
-			rows = append(rows, ppRow{g: &g, kid: &g.Procs[i]})
+			rows = append(rows, ppRow{g: &g, kid: &kids[i]})
 		}
 	}
 	return rows
@@ -186,7 +250,7 @@ func (p *ProcPanel) Layout(gtx layout.Context, th *theme.Theme, t procs.Table, f
 	size := gtx.Constraints.Max
 	if p.clicks == nil {
 		p.clicks = map[string]*widget.Clickable{}
-		p.hovers = map[int]*gesture.Hover{}
+		p.hovers = map[string]*gesture.Hover{}
 		p.list.Axis = layout.Vertical
 	}
 	// Clicks first, so this frame already draws their result.
@@ -206,13 +270,12 @@ func (p *ProcPanel) Layout(gtx layout.Context, th *theme.Theme, t procs.Table, f
 	rows := p.rows(t, filter)
 	p.prune(rows)
 	cols := ppCols(gtx.Metric.PxToDp(size.X))
-	var maxCores float64 = 1
-	for _, r := range rows {
-		if r.kid == nil && r.more == 0 && r.g.Cores > maxCores {
-			maxCores = r.g.Cores
-		}
+	// The bar scale comes from the whole table, so filtering doesn't rescale.
+	var busiest float64
+	for _, g := range t.Groups {
+		busiest = max(busiest, g.Cores)
 	}
-	d := &ppDraw{gtx: gtx, th: th, cols: cols, w: size.X, swatch: swatch, maxCores: maxCores}
+	d := &ppDraw{gtx: gtx, th: th, cols: cols, w: size.X, swatch: swatch, maxCores: ppBarScale(busiest)}
 
 	headH, footH := gtx.Dp(32), gtx.Dp(30)
 	p.header(d, headH)
@@ -226,7 +289,14 @@ func (p *ProcPanel) Layout(gtx layout.Context, th *theme.Theme, t procs.Table, f
 		if len(rows) == 0 && filter != "" {
 			ppText(lg, th, th.Font, theme.Size12, th.TextQuiet, "No groups match", gtx.Dp(12), size.X, gtx.Dp(8), gtx.Dp(30), false)
 		}
-		p.list.List.Layout(lg, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
+		ls := material.List(&material.Theme{}, &p.list)
+		ls.AnchorStrategy = material.Overlay
+		ls.Track.MinorPadding = 2
+		ls.Indicator = material.ScrollIndicatorStyle{
+			MajorMinLen: 24, MinorWidth: 4, CornerRadius: 2,
+			Color: theme.Mix(th.Surface, th.Muted, 0.22), HoverColor: theme.Mix(th.Surface, th.Muted, 0.45),
+		}
+		ls.Layout(lg, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
 			d.gtx = gtx
 			return p.row(d, rows[i])
 		})
@@ -246,11 +316,11 @@ func (p *ProcPanel) Layout(gtx layout.Context, th *theme.Theme, t procs.Table, f
 // prune drops click and hover state for rows that are gone. Expanded state
 // stays, so a group that leaves and comes back opens as it was.
 func (p *ProcPanel) prune(rows []ppRow) {
-	keys, pids := map[string]bool{}, map[int]bool{}
+	keys, kids := map[string]bool{}, map[string]bool{}
 	for _, r := range rows {
 		keys[r.g.Key] = true
 		if r.kid != nil {
-			pids[r.kid.PID] = true
+			kids[ppKidKey(r)] = true
 		}
 	}
 	for k := range p.clicks {
@@ -259,11 +329,14 @@ func (p *ProcPanel) prune(rows []ppRow) {
 		}
 	}
 	for k := range p.hovers {
-		if !pids[k] {
+		if !kids[k] {
 			delete(p.hovers, k)
 		}
 	}
 }
+
+// ppKidKey names a member row's hover state: its group and comm.
+func ppKidKey(r ppRow) string { return r.g.Key + "\x00" + r.kid.Comm }
 
 // ppDraw carries what every row needs.
 type ppDraw struct {
@@ -333,17 +406,18 @@ func (p *ProcPanel) row(d *ppDraw, r ppRow) layout.Dimensions {
 	x0 := gtx.Dp(12)
 	indent := x0 + gtx.Dp(37)
 	kidFg := theme.Mix(th.Muted, th.Fg, 0.53)
-	mono := font.Font{Typeface: "Go Mono"}
+	mono := th.Mono
 
 	switch {
 	case r.more > 0:
 		ppText(gtx, th, mono, theme.Size12, th.TextQuiet, "+"+ppFormatInt(r.more)+" more", indent, d.nameW()-indent+x0, base, 0, false)
 
 	case r.kid != nil:
-		hv := p.hovers[r.kid.PID]
+		hk := ppKidKey(r)
+		hv := p.hovers[hk]
 		if hv == nil {
 			hv = new(gesture.Hover)
-			p.hovers[r.kid.PID] = hv
+			p.hovers[hk] = hv
 		}
 		if hv.Update(gtx.Source) {
 			paint.FillShape(gtx.Ops, th.SurfaceSecondary, bg.Op(gtx.Ops))
@@ -354,11 +428,13 @@ func (p *ProcPanel) row(d *ppDraw, r ppRow) layout.Dimensions {
 		nw := d.nameW() - indent + x0
 		used := ppText(gtx, th, mono, theme.Size12, kidFg, r.kid.Comm, indent, nw, base, 0, false)
 		gap := gtx.Dp(7)
-		ppText(gtx, th, mono, theme.Size12, th.TextQuiet, strconv.Itoa(r.kid.PID), indent+used+gap, nw-used-gap, base, 0, false)
+		ppText(gtx, th, mono, theme.Size12, th.TextQuiet, ppKidNote(*r.kid), indent+used+gap, nw-used-gap, base, 0, false)
 		for i, c := range d.cols {
 			x, w := d.cell(i)
 			s := ""
 			switch c.col {
+			case ppProcs:
+				s = ppFormatInt(r.kid.N)
 			case ppThreads:
 				s = ppFormatInt(r.kid.Threads)
 			case ppCPU:
@@ -391,6 +467,8 @@ func (p *ProcPanel) row(d *ppDraw, r ppRow) layout.Dimensions {
 			paint.FillShape(gtx.Ops, sw, clip.UniformRRect(image.Rect(x, (h-s)/2, x+s, (h+s)/2), gtx.Dp(2)).Op(gtx.Ops))
 		}
 		x += gtx.Dp(8 + 7)
+		ppIcon(gtx, th, *g, image.Pt(x, (h-gtx.Dp(14))/2), gtx.Dp(14))
+		x += gtx.Dp(14 + 7)
 		name, branch, kind := ppLabels(*g)
 		nameFg := th.Fg
 		if g.Kind == procs.Other {
@@ -428,8 +506,8 @@ func (p *ProcPanel) row(d *ppDraw, r ppRow) layout.Dimensions {
 					if fill.A == 0 {
 						fill = theme.Mix(th.Surface, th.Muted, 0.4)
 					}
-					if fw := int(float64(bw) * g.Cores / d.maxCores); fw > 0 {
-						paint.FillShape(gtx.Ops, fill, clip.UniformRRect(image.Rect(bx, by, bx+fw, by+bh), bh/2).Op(gtx.Ops))
+					if fw := min(bw, int(float64(bw)*g.Cores/d.maxCores+0.5)); fw > 0 {
+						paint.FillShape(gtx.Ops, fill, clip.UniformRRect(image.Rect(bx, by, bx+fw, by+bh), min(bh, fw)/2).Op(gtx.Ops))
 					}
 				}
 			}
@@ -457,6 +535,14 @@ func ppLabels(g procs.Group) (name, branch, kind string) {
 		return g.Name, "", "app"
 	case procs.System:
 		return g.Name, "", "system"
+	case procs.Other:
+		switch g.Folded {
+		case 0:
+		case 1:
+			return g.Name, "", "1 group"
+		default:
+			return g.Name, "", ppFormatInt(g.Folded) + " groups"
+		}
 	}
 	return g.Name, "", ""
 }
