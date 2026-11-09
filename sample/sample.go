@@ -7,6 +7,10 @@ import "time"
 
 // Snapshot is one reading of the whole machine. Rates cover the time since
 // the previous Sample; the first Sample reports zero rates.
+//
+// It crosses the wire to embedders such as pitwall, gob-encoded: renaming,
+// removing or retyping a field of Snapshot or a type in it breaks them, and
+// a new field is additive. Time arrives without its monotonic reading.
 type Snapshot struct {
 	Time   time.Time
 	Host   Host

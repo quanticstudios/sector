@@ -173,6 +173,13 @@ func checkGroups(t *testing.T, tb Table, want []wantGroup) {
 		if w.kind == Agent && g.Agent != w.name {
 			t.Errorf("%s: Agent = %q", w.key, g.Agent)
 		}
+		wantPID := 0
+		if w.kind == Agent {
+			wantPID = w.pids[0] // an agent's own pid comes first in want
+		}
+		if g.PID != wantPID {
+			t.Errorf("%s: PID = %d, want %d", w.key, g.PID, wantPID)
+		}
 		got := pids(g)
 		if len(got) != len(w.pids) {
 			t.Errorf("%s: members %v, want %v", w.key, got, w.pids)

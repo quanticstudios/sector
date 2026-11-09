@@ -237,7 +237,7 @@ func (s *Scanner) group(ps []*proc) Table {
 		switch a := agentOf(p, 0); {
 		case a != nil:
 			key := "agent:" + strconv.Itoa(a.PID) + ":" + strconv.FormatUint(a.start, 10)
-			g := Group{Kind: Agent, Name: a.agent, Agent: a.agent}
+			g := Group{Kind: Agent, PID: a.PID, Name: a.agent, Agent: a.agent}
 			if groups[key] == nil {
 				g.Repo, g.Branch = s.repo(a.PID, repos)
 			}

@@ -55,6 +55,8 @@ sector entry to your app launcher. `sector --version` prints the version.
 | `view`       | The dashboard as a Gio widget, for any host window             |
 | `cmd/sector` | The standalone window                                          |
 
+Embedding in pitwall: [docs/pitwall.md](docs/pitwall.md).
+
 ## Package power
 
 sector reads CPU package power from the RAPL energy counter in

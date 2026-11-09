@@ -29,6 +29,7 @@ const (
 type Group struct {
 	Key     string // stable across scans: same agent session, same app, same key
 	Kind    Kind
+	PID     int    // the agent's own process for Kind Agent, 0 otherwise
 	Name    string // "claude", "Chromium", "Everything else"
 	Agent   string // the agent's name for Kind Agent: "claude", "codex"
 	Repo    string // the repo folder an agent runs in, "" when unknown
@@ -40,7 +41,9 @@ type Group struct {
 	Folded  int    // for Other: how many App and System groups folded into it
 }
 
-// Table is one scan, grouped.
+// Table is one scan, grouped. It crosses the wire to embedders such as
+// pitwall, gob-encoded: renaming, removing or retyping a field of Table,
+// Group or Proc breaks them, and a new field is additive.
 type Table struct {
 	Groups  []Group // busiest first; Other always last
 	Procs   int     // processes seen
