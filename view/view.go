@@ -160,6 +160,11 @@ func (v *View) dash(gtx layout.Context, avail int) layout.Dimensions {
 	v.measuring = false
 	if fr < 0 {
 		nat[cardProcs] = max(nat[cardProcs], gtx.Dp(320))
+	} else {
+		// The wide layout grows the network graph from 48 to 92 dp, tall
+		// enough for spark to label every gridline. The floor stays, so
+		// a short window squeezes it back first.
+		nat[cardNet] += gtx.Dp(44)
 	}
 
 	rows := rowHeights(p, nat, floor, avail-2*pad, gp, fr)
