@@ -16,7 +16,7 @@ request merges, `git pull --ff-only` and run `sh scripts/release.sh --tag`.
 It tags the release commit on `main` and pushes the tag once, which starts
 the release build. Either step takes `--dry-run`.
 
-## Unreleased
+## v0.1.0
 
 - CPU and memory grouped by the coding agent, repo and app that use them, so eleven `claude` processes show up as the agents and worktrees they are.
 - Cores laid out by CCD with each die's temperature, beside overall CPU in percent.
