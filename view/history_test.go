@@ -13,6 +13,9 @@ func TestKeep(t *testing.T) {
 	t0 := time.Unix(0, 0)
 	for i := range History + 10 {
 		h = keep(h, entry{t: t0.Add(time.Duration(i) * time.Second)})
+		if len(h) != min(i+1, History) {
+			t.Fatalf("after %d pushes: %d entries", i+1, len(h))
+		}
 	}
 	if len(h) != History || h[0].t != t0.Add(10*time.Second) {
 		t.Fatalf("len %d, oldest %v", len(h), h[0].t)

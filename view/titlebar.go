@@ -92,7 +92,10 @@ func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 		layout.Rigid(sp.Layout),
 		layout.Rigid(v.text(theme.Size12, font.SemiBold, th.Fg, now.Format("15:04:05"))),
 	)
-	layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
+	layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min = image.Pt(gtx.Constraints.Max.X, 0)
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
+	})
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 

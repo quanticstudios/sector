@@ -19,10 +19,6 @@ const (
 	icPlay    = "M7 4.5v15a.8.8 0 0 0 1.2.7l12-7.5a.8.8 0 0 0 0-1.4l-12-7.5A.8.8 0 0 0 7 4.5Z"
 	icDesktop = "M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM8 21h8M12 17v4"
 	icThermo  = "M14 4v10.5a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"
-	// The sector mark's three arcs, from assets/logo.svg.
-	icArcBlue   = "M5.6 16.6A8 8 0 0 1 7.4 5.4"
-	icArcYellow = "M10.7 4.1a8 8 0 0 1 9 6.3"
-	icArcGreen  = "M19.4 14.1a8 8 0 0 1-10.6 5.5"
 )
 
 // Adapted from pitwall: internal/ui/sidebar/icons.go (parsePath, arcCenter, iconPath).
@@ -195,17 +191,24 @@ func icon(gtx layout.Context, d string, size int, c color.NRGBA) layout.Dimensio
 	return layout.Dimensions{Size: image.Pt(size, size)}
 }
 
-// logo draws the sector mark: three arcs around a light dot.
+// logo draws the sector mark in a size px box: one arc of radius 8 (in a
+// 24 unit box) from 140° to 220° clockwise, drawn three times, rotated 0°,
+// 120° and 240° about the center, around a light dot.
 func logo(gtx layout.Context, size int, blue, yellow, green, dot color.NRGBA) layout.Dimensions {
-	w := 3.2 * float32(size) / 24
-	for _, a := range []struct {
-		d string
-		c color.NRGBA
-	}{{icArcBlue, blue}, {icArcYellow, yellow}, {icArcGreen, green}} {
-		paint.FillShape(gtx.Ops, a.c, clip.Stroke{Path: iconPath(gtx, a.d, size), Width: w}.Op())
+	s := float32(size) / 24
+	ctr := f32.Pt(12*s, 12*s)
+	for k, c := range []color.NRGBA{blue, yellow, green} {
+		a := (140 + 120*float64(k)) * math.Pi / 180
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(ctr.Add(f32.Pt(float32(math.Cos(a)), float32(math.Sin(a))).Mul(8 * s)))
+		p.ArcTo(ctr, ctr, 80*math.Pi/180)
+		paint.FillShape(gtx.Ops, c, clip.Stroke{Path: p.End(), Width: 3.2 * s}.Op())
 	}
-	r := 2.2 * float32(size) / 24
-	c := float32(size) / 2
-	paint.FillShape(gtx.Ops, dot, clip.Ellipse{Min: image.Pt(int(c-r+.5), int(c-r+.5)), Max: image.Pt(int(c+r+.5), int(c+r+.5))}.Op(gtx.Ops))
+	var p clip.Path
+	p.Begin(gtx.Ops)
+	p.MoveTo(ctr.Add(f32.Pt(2.2*s, 0)))
+	p.ArcTo(ctr, ctr, 2*math.Pi)
+	paint.FillShape(gtx.Ops, dot, clip.Outline{Path: p.End()}.Op())
 	return layout.Dimensions{Size: image.Pt(size, size)}
 }
