@@ -54,8 +54,31 @@ func colSpan(p place, w, pad, gap int) (x, cw int) {
 
 // rowHeights sizes the rows: each row fits its single-row cards' natural
 // heights, a card spanning rows stretches the last of them if it must, and
-// row fr takes whatever is left of avail.
-func rowHeights(p [nCards]place, nat [nCards]int, avail, gap, fr int) []int {
+// row fr takes whatever is left of avail. When the natural rows are taller
+// than avail and fr is set, the rows shrink toward the heights the cards'
+// floors need, so the dashboard fits; only below those does it scroll.
+func rowHeights(p [nCards]place, nat, floor [nCards]int, avail, gap, fr int) []int {
+	h := fitRows(p, nat, gap)
+	if fr < 0 {
+		return h
+	}
+	total := gap * (len(h) - 1)
+	for _, v := range h {
+		total += v
+	}
+	if avail > total {
+		h[fr] += avail - total
+		return h
+	}
+	lo := fitRows(p, floor, gap)
+	for i := range lo {
+		lo[i] = min(lo[i], h[i])
+	}
+	return squeeze(h, lo, avail-gap*(len(h)-1))
+}
+
+// fitRows is the height of each row that fits the cards at heights hs.
+func fitRows(p [nCards]place, hs [nCards]int, gap int) []int {
 	n := 0
 	for _, c := range p {
 		n = max(n, c.row+c.rows)
@@ -63,7 +86,7 @@ func rowHeights(p [nCards]place, nat [nCards]int, avail, gap, fr int) []int {
 	h := make([]int, n)
 	for i, c := range p {
 		if c.rows == 1 {
-			h[c.row] = max(h[c.row], nat[i])
+			h[c.row] = max(h[c.row], hs[i])
 		}
 	}
 	for i, c := range p {
@@ -72,18 +95,9 @@ func rowHeights(p [nCards]place, nat [nCards]int, avail, gap, fr int) []int {
 			for r := c.row; r < c.row+c.rows; r++ {
 				sum += h[r]
 			}
-			if sum < nat[i] {
-				h[c.row+c.rows-1] += nat[i] - sum
+			if sum < hs[i] {
+				h[c.row+c.rows-1] += hs[i] - sum
 			}
-		}
-	}
-	if fr >= 0 {
-		total := gap * (n - 1)
-		for _, v := range h {
-			total += v
-		}
-		if avail > total {
-			h[fr] += avail - total
 		}
 	}
 	return h

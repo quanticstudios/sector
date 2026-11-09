@@ -97,13 +97,18 @@ func thin(share float64, c color.NRGBA) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions { return bar(gtx, gtx.Dp(4), share, c) }
 }
 
-// rule is a one pixel line with room above and below it.
-func (v *View) rule(above, below int) layout.Widget {
-	return func(gtx layout.Context) layout.Dimensions {
-		hline(gtx, 0, gtx.Constraints.Max.X, above, v.th.BorderSubtle)
-		return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, above+1+below)}
+// rule is a one pixel line between gaps of above and below px, which
+// halve when the card is short.
+func (v *View) rule(above, below int) []part {
+	line := func(gtx layout.Context) layout.Dimensions {
+		hline(gtx, 0, gtx.Constraints.Max.X, 0, v.th.BorderSubtle)
+		return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 1)}
 	}
+	return []part{gap(above).to(above / 2), rigid(line), gap(below).to(below / 2)}
 }
+
+// sparkFloor is how short a sparkline gets in a squeezed card.
+const sparkFloor = 24
 
 func share(a, b uint64) float64 {
 	if b == 0 {
@@ -157,9 +162,10 @@ func (v *View) memCard(gtx layout.Context) layout.Dimensions {
 	swap := v.kv([]span{{s: "Swap", c: th.Muted}},
 		span{s: inUnit(float64(m.SwapUsed), sdiv), c: th.Fg}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(m.SwapTotal), sdiv) + " " + sunit, c: th.Fg})
 	return v.card(gtx, func(gtx layout.Context) layout.Dimensions {
-		parts := []part{rigid(head), gap(gtx.Dp(8)), flexed(gtx.Dp(48), graph), gap(gtx.Dp(10)), rigid(memrow), gap(gtx.Dp(9)), rigid(v.grid2(cells))}
+		parts := []part{rigid(head), gap(gtx.Dp(8)), flexed(gtx.Dp(48), graph).to(gtx.Dp(sparkFloor)), gap(gtx.Dp(10)), rigid(memrow), gap(gtx.Dp(9)), rigid(v.grid2(cells))}
 		if m.SwapTotal > 0 {
-			parts = append(parts, rigid(v.rule(gtx.Dp(9), gtx.Dp(8))), rigid(swap), gap(gtx.Dp(5)), rigid(thin(share(m.SwapUsed, m.SwapTotal), th.MemUsed)))
+			parts = append(parts, v.rule(gtx.Dp(9), gtx.Dp(8))...)
+			parts = append(parts, rigid(swap), gap(gtx.Dp(5)), rigid(thin(share(m.SwapUsed, m.SwapTotal), th.MemUsed)))
 		}
 		return column(gtx, parts...)
 	})
@@ -222,9 +228,9 @@ func (v *View) diskCard(gtx layout.Context) layout.Dimensions {
 		parts := []part{rigid(head)}
 		for i, d := range drives {
 			if i > 0 {
-				parts = append(parts, rigid(v.rule(gtx.Dp(10), gtx.Dp(10))))
+				parts = append(parts, v.rule(gtx.Dp(10), gtx.Dp(10))...)
 			} else {
-				parts = append(parts, gap(gtx.Dp(10)))
+				parts = append(parts, gap(gtx.Dp(10)).to(gtx.Dp(5)))
 			}
 			parts = append(parts, v.drive(gtx, d)...)
 		}
@@ -243,7 +249,9 @@ func diskTop(h []entry, name string) float64 {
 	return ceilPow2(peak/1e6*1.1, 4)
 }
 
-// drive is one drive's block in the disk card.
+// drive is one drive's block in the disk card. A short card leaves out the
+// used and free line first, the bar still shows how full the drive is,
+// then the drive's read and write line, which the card's header sums.
 func (v *View) drive(gtx layout.Context, d sample.Drive) []part {
 	th := v.th
 	h, _ := v.recent()
@@ -271,9 +279,9 @@ func (v *View) drive(gtx layout.Context, d sample.Drive) []part {
 		{s: inUnit(float64(d.Free), div) + " " + unit, c: th.Fg}, {s: "free", c: th.TextQuiet},
 	}, span{s: pct(share(d.Used, d.Size)), c: th.Fg}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(d.Size), div) + " " + unit, c: th.Fg})
 	return []part{
-		rigid(head), gap(gtx.Dp(7)), flexed(gtx.Dp(36), graph), gap(gtx.Dp(7)),
-		rigid(v.kv(v.ioPair(mbStr(d.ReadBps), mbStr(d.WriteBps), true))), gap(gtx.Dp(5)),
-		rigid(size), gap(gtx.Dp(5)), rigid(thin(share(d.Used, d.Size), cBarGray)),
+		rigid(head), gap(gtx.Dp(7)), flexed(gtx.Dp(36), graph).to(gtx.Dp(sparkFloor)), gap(gtx.Dp(7)),
+		rigid(v.kv(v.ioPair(mbStr(d.ReadBps), mbStr(d.WriteBps), true))).opt(1), gap(gtx.Dp(5)).opt(1),
+		rigid(size).opt(2), gap(gtx.Dp(5)).opt(2), rigid(thin(share(d.Used, d.Size), cBarGray)),
 	}
 }
 
@@ -311,7 +319,7 @@ func (v *View) netCard(gtx layout.Context) layout.Dimensions {
 		}
 	}
 	return v.card(gtx, func(gtx layout.Context) layout.Dimensions {
-		return column(gtx, rigid(v.head("Network", n.Name, span{s: n.Addr, c: cSoft})), gap(gtx.Dp(8)), rigid(graph), gap(gtx.Dp(8)),
+		return column(gtx, rigid(v.head("Network", n.Name, span{s: n.Addr, c: cSoft})), gap(gtx.Dp(8)), flexed(gtx.Dp(48), graph).to(gtx.Dp(sparkFloor)), gap(gtx.Dp(8)),
 			rigid(row("Down", false, th.Blue, n.RxBps, peakRx, n.RxTotal)), gap(gtx.Dp(6)),
 			rigid(row("Up", true, cIOOut, n.TxBps, peakTx, n.TxTotal)))
 	})

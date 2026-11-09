@@ -119,7 +119,7 @@ func (v *View) cpuCard(gtx layout.Context) layout.Dimensions {
 		return column(gtx, rigid(head), gap(gtx.Dp(6)), rigid(legend), gap(gtx.Dp(8)),
 			flexed(gtx.Dp(150), func(gtx layout.Context) layout.Dimensions {
 				return v.cpuGraph(gtx, h, end, bands, float64(threads))
-			}))
+			}).to(gtx.Dp(56)))
 	})
 }
 
@@ -133,11 +133,18 @@ func (v *View) cpuGraph(gtx layout.Context, h []entry, end time.Time, bands []ba
 	y := func(c float64) float32 { return y0 - float32(c/top)*(y0-y1) }
 	x := func(t time.Time) float32 { return float32(pw) * (1 - float32(end.Sub(t))/float32(window)) }
 
+	// A short graph labels every second grid line, or only the top one.
+	every := 1
+	for every < 4 && (y0-y1)*float32(every)/4 < float32(gtx.Dp(18)) {
+		every *= 2
+	}
 	for k := 1; k <= 4; k++ {
 		c := top * float64(k) / 4
 		yy := int(y(c))
 		hline(gtx, 0, pw, yy, cGridLine)
-		v.placeLabel(gtx, size.X, yy, 1, 0.5, th.TextQuiet, strconv.FormatFloat(math.Round(c), 'f', -1, 64))
+		if k%every == 0 {
+			v.placeLabel(gtx, size.X, yy, 1, 0.5, th.TextQuiet, strconv.FormatFloat(math.Round(c), 'f', -1, 64))
+		}
 	}
 
 	st := stack(seriesOf(bands))
@@ -265,7 +272,8 @@ func (v *View) tooltip(gtx layout.Context, e entry, end time.Time, i int, bands 
 	if left+box.X > pw {
 		left = cx - box.X - gtx.Dp(14)
 	}
-	defer op.Offset(image.Pt(left, 0)).Push(gtx.Ops).Pop()
+	// A short graph lifts the box over the legend rather than past the card.
+	defer op.Offset(image.Pt(left, min(0, gtx.Constraints.Min.Y-box.Y))).Push(gtx.Ops).Pop()
 	r := image.Rectangle{Max: box}
 	for _, s := range []struct {
 		grow, drop int
