@@ -25,19 +25,38 @@ const (
 
 // apps names an app by its root process's comm, lower-cased.
 var apps = map[string]string{
-	"chromium": "Chromium",
-	"chrome":   "Chrome",
-	"brave":    "Brave",
-	"firefox":  "Firefox",
-	"spotify":  "Spotify",
-	"slack":    "Slack",
-	"code":     "VS Code",
-	"code-oss": "VS Code",
-	"discord":  "Discord",
-	"signal":   "Signal",
-	"obsidian": "Obsidian",
-	"zoom":     "Zoom",
+	"chromium":    "Chromium",
+	"chrome":      "Chrome",
+	"brave":       "Brave",
+	"firefox":     "Firefox",
+	"spotify":     "Spotify",
+	"slack":       "Slack",
+	"code":        "VS Code",
+	"code-oss":    "VS Code",
+	"discord":     "Discord",
+	"signal":      "Signal",
+	"obsidian":    "Obsidian",
+	"zoom":        "Zoom",
+	"onepassword": "1Password",
+	"1password":   "1Password",
 }
+
+// launchers are compositors: they start apps but are not one, so each
+// child of one roots its own app, and a unit holding one names nothing.
+var launchers = map[string]bool{
+	"Hyprland": true, "sway": true, "niri": true, "river": true, "labwc": true,
+	"wayfire": true, "kwin_wayland": true, "gnome-shell": true,
+}
+
+// wrappers set up, sandbox or supervise an app and never name its group,
+// by comm (15 bytes at most).
+var wrappers = map[string]bool{
+	"bwrap": true, "xdg-dbus-proxy": true, "flatpak": true, "flatpak-session": true,
+	"uwsm": true, "start-hyprland": true, "systemd-run": true,
+}
+
+// shells, by exe or comm: one at an app's root only launches it.
+var shells = map[string]bool{"sh": true, "bash": true, "dash": true, "zsh": true, "fish": true}
 
 type procKey struct {
 	pid   int
@@ -50,6 +69,8 @@ type seen struct {
 	comm  string // an exec changes it, and with it the agent
 	agent string
 	uid   int
+	unit  string // the systemd unit, from /proc/<pid>/cgroup
+	shell bool
 }
 
 type scanner struct {
@@ -68,6 +89,8 @@ type proc struct {
 	start uint64
 	agent string
 	uid   int
+	unit  string
+	shell bool
 }
 
 func (s *Scanner) scan() (Table, error) {
@@ -100,9 +123,15 @@ func (s *Scanner) scan() (Table, error) {
 			if old.uid, ok = readUID(pid); !ok {
 				continue
 			}
-			old.agent = identifyProc(pid, p.Comm)
+			exe, _ := os.Readlink(procRoot + "/" + strconv.Itoa(pid) + "/exe")
+			exe = strings.TrimSuffix(exe, " (deleted)")
+			old.agent = identifyProc(pid, p.Comm, exe)
+			old.shell = shells[p.Comm] || shells[filepath.Base(exe)]
+			// ponytail: read again only on exec; a process moved to another
+			// unit without one keeps its old unit.
+			old.unit = readUnit(pid)
 		}
-		p.agent, p.uid = old.agent, old.uid
+		p.agent, p.uid, p.unit, p.shell = old.agent, old.uid, old.unit, old.shell
 		if !first && elapsed > 0 {
 			if had && ticks >= old.ticks {
 				p.Cores = float64(ticks-old.ticks) / clkTck / elapsed
@@ -130,7 +159,24 @@ func (s *Scanner) group(ps []*proc) Table {
 		t.Threads += p.Threads
 	}
 	self := os.Getuid()
-	system := func(p *proc) bool { return p.PID == 2 || p.PPID == 2 || p.uid != self }
+	// The user's service manager is System too: it runs services, not an app.
+	system := func(p *proc) bool {
+		return p.PID == 2 || p.PPID == 2 || p.uid != self || p.Comm == "systemd" || p.Comm == "(sd-pam)"
+	}
+
+	// unitApp names the app each unit runs, "" for a unit that names none:
+	// a compositor's unit holds the apps it starts.
+	unitApp := map[string]string{}
+	for _, p := range ps {
+		if _, ok := unitApp[p.unit]; !ok {
+			unitApp[p.unit] = appOfUnit(p.unit)
+		}
+	}
+	for _, p := range ps {
+		if launchers[p.Comm] {
+			unitApp[p.unit] = ""
+		}
+	}
 
 	// agentOf is the nearest agent at or above p, nil when there is none.
 	agentMemo := map[int]*proc{}
@@ -149,24 +195,30 @@ func (s *Scanner) group(ps []*proc) Table {
 		agentMemo[p.PID] = a
 		return a
 	}
-	// rootOf is p's app root: the topmost ancestor whose parent is pid 1, a
-	// systemd (the user manager) or a System process.
-	rootMemo := map[int]*proc{}
-	var rootOf func(p *proc, depth int) *proc
-	rootOf = func(p *proc, depth int) *proc {
+	// rootOf is p's app root, the topmost ancestor whose parent is pid 1, a
+	// System process or a launcher, and how far below it p lies.
+	type rooted struct {
+		root  *proc
+		depth int
+	}
+	rootMemo := map[int]rooted{}
+	var rootOf func(p *proc, depth int) rooted
+	rootOf = func(p *proc, depth int) rooted {
 		if r, ok := rootMemo[p.PID]; ok {
 			return r
 		}
-		r := p
+		r := rooted{p, 0}
 		if parent := byPID[p.PPID]; parent != nil && parent != p && parent.PID != 1 &&
-			parent.Comm != "systemd" && !system(parent) && depth < 256 {
+			!system(parent) && !launchers[parent.Comm] && depth < 256 {
 			r = rootOf(parent, depth+1)
+			r.depth++
 		}
 		rootMemo[p.PID] = r
 		return r
 	}
 
 	groups := map[string]*Group{}
+	var loose []*proc // App processes no unit names
 	repos := make(map[string]gitDir)
 	add := func(key string, g Group, p *proc) {
 		gp := groups[key]
@@ -191,15 +243,38 @@ func (s *Scanner) group(ps []*proc) Table {
 			add(key, g, p)
 		case system(p):
 			add("system", Group{Kind: System, Name: "System"}, p)
-		default:
-			name := rootOf(p, 0).Comm
-			if n := apps[strings.ToLower(name)]; n != "" {
-				name = n
-			}
+		case unitApp[p.unit] != "":
+			name := unitApp[p.unit]
 			add("app:"+name, Group{Kind: App, Name: name}, p)
+		default:
+			loose = append(loose, p)
 		}
 	}
 	s.repos = repos
+
+	// A tree outside any app's unit is named after its shallowest member
+	// that is no wrapper: bwrap runs the app, a launching shell starts it.
+	// ponytail: a shell still running two apps names both after one.
+	names := map[*proc]*proc{}
+	for _, p := range loose {
+		r := rootOf(p, 0)
+		if wrappers[p.Comm] || p.shell && r.depth == 0 {
+			continue
+		}
+		if n := names[r.root]; n == nil || rootOf(n, 0).depth > r.depth ||
+			rootOf(n, 0).depth == r.depth && n.PID > p.PID {
+			names[r.root] = p
+		}
+	}
+	for _, p := range loose {
+		r := rootOf(p, 0).root
+		n := names[r]
+		if n == nil {
+			n = r // only wrappers: name it after the root after all
+		}
+		name := appName(n.Comm)
+		add("app:"+name, Group{Kind: App, Name: name}, p)
+	}
 
 	other := Group{Key: "other", Kind: Other, Name: "Everything else"}
 	for _, g := range groups {
@@ -208,6 +283,7 @@ func (s *Scanner) group(ps []*proc) Table {
 			other.Cores += g.Cores
 			other.RSS += g.RSS
 			other.Threads += g.Threads
+			other.Folded++
 			continue
 		}
 		t.Groups = append(t.Groups, *g)
@@ -329,6 +405,88 @@ func readUID(pid int) (int, bool) {
 	return uid, err == nil
 }
 
+// readUnit is the systemd unit pid runs in: the last part of its cgroup v2
+// path, "" without one.
+func readUnit(pid int) string {
+	b, err := os.ReadFile(procRoot + "/" + strconv.Itoa(pid) + "/cgroup")
+	if err != nil {
+		return ""
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if path, ok := strings.CutPrefix(l, "0::"); ok {
+			return path[strings.LastIndexByte(path, '/')+1:]
+		}
+	}
+	return ""
+}
+
+// appOfUnit names the app a systemd unit runs, or returns "". Launchers
+// name units app[-<launcher>]-<app id>-<random>.scope or
+// app[-<launcher>]-<app id>[@<random>].service, flatpak's launcher is
+// "flatpak", snaps run in snap.<name>.<app>-<id>.scope, and any other
+// <name>.service is a user service. A launcher script's scope holds every
+// app it started, so it names none.
+func appOfUnit(unit string) string {
+	var id string
+	switch {
+	case strings.HasPrefix(unit, "app-"):
+		s := strings.TrimPrefix(unit, "app-")
+		if t, ok := strings.CutSuffix(s, ".scope"); ok {
+			if i := strings.LastIndexByte(t, '-'); i >= 0 {
+				t = t[:i] // the random part
+			}
+			s = t
+		} else if t, ok := strings.CutSuffix(s, ".service"); ok {
+			s, _, _ = strings.Cut(t, "@")
+		} else {
+			return "" // a slice
+		}
+		if _, after, ok := strings.Cut(s, "-"); ok {
+			s = after // the launcher
+		}
+		id = s
+	case strings.HasPrefix(unit, "snap.") && strings.HasSuffix(unit, ".scope"):
+		id, _, _ = strings.Cut(strings.TrimPrefix(unit, "snap."), ".")
+	case strings.HasSuffix(unit, ".service"):
+		id, _, _ = strings.Cut(strings.TrimSuffix(unit, ".service"), "@")
+		if t, ok := strings.CutPrefix(id, "dbus-:"); ok {
+			_, id, _ = strings.Cut(t, "-") // dbus-:1.26-<bus name>
+		}
+	}
+	// systemd escapes a dash inside an app id. ponytail: \x2d is the only
+	// escape app ids carry in practice.
+	id = strings.TrimSuffix(strings.ReplaceAll(id, `\x2d`, "-"), ".desktop")
+	if id == "" || shells[id] || wrappers[id] || launchers[id] {
+		return ""
+	}
+	for _, ext := range []string{".sh", ".bash", ".py"} {
+		if strings.HasSuffix(id, ext) {
+			return ""
+		}
+	}
+	return appName(id)
+}
+
+// appName is a display name for an app id or comm: a known app's name if
+// any dotted part of it is one, else the last part of a reverse-DNS id
+// (org.acme.Notes is Notes), else the id.
+func appName(id string) string {
+	parts := strings.Split(id, ".")
+	for i := len(parts) - 1; i >= 0; i-- {
+		if n := apps[strings.ToLower(parts[i])]; n != "" {
+			return n
+		}
+	}
+	if len(parts) < 3 {
+		return id
+	}
+	last := parts[len(parts)-1]
+	if l := strings.ToLower(last); l == "client" || l == "app" {
+		last = parts[len(parts)-2]
+	}
+	return last
+}
+
 func readUptime() (float64, error) {
 	b, err := os.ReadFile(procRoot + "/uptime")
 	if err != nil {
@@ -345,9 +503,7 @@ func readUptime() (float64, error) {
 
 // identifyProc names the agent process pid runs, by its comm and exe, or,
 // for an interpreter, by the script its argv starts with.
-func identifyProc(pid int, comm string) string {
-	exe, _ := os.Readlink(procRoot + "/" + strconv.Itoa(pid) + "/exe")
-	exe = strings.TrimSuffix(exe, " (deleted)")
+func identifyProc(pid int, comm, exe string) string {
 	if p := identify(comm, exe); p != "" || !interpreter(comm, exe) {
 		return p
 	}
