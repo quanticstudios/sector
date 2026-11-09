@@ -15,6 +15,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/unit"
 
 	"github.com/quanticstudios/sector/theme"
 )
@@ -208,14 +209,26 @@ func seriesOf(bands []band) [][]float64 {
 // placeLabel draws s with its anchor point (ax, ay, as fractions of its
 // size) at x, y.
 func (v *View) placeLabel(gtx layout.Context, x, y int, ax, ay float32, c color.NRGBA, s string) {
+	v.placeText(gtx, theme.Size12, x, y, ax, ay, c, s, nil)
+}
+
+// placeText is placeLabel at size, and returns where the text went. When
+// ok is set it draws only if ok accepts that rectangle.
+func (v *View) placeText(gtx layout.Context, size unit.Sp, x, y int, ax, ay float32, c color.NRGBA, s string, ok func(image.Rectangle) bool) (image.Rectangle, bool) {
 	c2 := gtx
 	c2.Constraints = layout.Constraints{Max: image.Pt(big, big)}
 	m := op.Record(gtx.Ops)
-	d := v.th.Label(c2, theme.Size12, font.Normal, c, s)
+	d := v.th.Label(c2, size, font.Normal, c, s)
 	call := m.Stop()
-	t := op.Offset(image.Pt(x-int(ax*float32(d.Size.X)), y-int(ay*float32(d.Size.Y)))).Push(gtx.Ops)
+	at := image.Pt(x-int(ax*float32(d.Size.X)), y-int(ay*float32(d.Size.Y)))
+	r := image.Rectangle{Min: at, Max: at.Add(d.Size)}
+	if ok != nil && !ok(r) {
+		return r, false
+	}
+	t := op.Offset(at).Push(gtx.Ops)
 	call.Add(gtx.Ops)
 	t.Pop()
+	return r, true
 }
 
 // tooltip lists the groups at entry e, busiest first, beside the crosshair,
