@@ -44,27 +44,10 @@ func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 	if host.Model == "" {
 		detail = ""
 	}
-	up := host.Uptime
-	if !v.last.Time.IsZero() && up > 0 {
-		up += now.Sub(v.last.Time)
-	}
+	clock, up := v.clockAt(now)
 	sp := layout.Spacer{Width: 10}
 	children := []layout.FlexChild{
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Alignment: layout.Middle, Gap: gtx.Dp(9)}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return logo(gtx, gtx.Dp(18), th.Blue, th.Yellow, th.Green, th.Fg)
-				}),
-				layout.Rigid(v.text(theme.Size16-1, font.SemiBold, th.Fg, "sector")),
-			)
-		}),
-		layout.Rigid(layout.Spacer{Width: 18}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if host.Name == "" {
-				return layout.Dimensions{}
-			}
-			return v.chip(gtx, host.Name, detail, roomy, now, up)
-		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return v.lead(gtx, detail, roomy, clock, up) }),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			fw := 148
@@ -83,6 +66,30 @@ func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
 	})
 	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// lead is the title bar's left side: sector's mark, which an Embedded
+// view leaves out, then the host chip once a sample names the host.
+func (v *View) lead(gtx layout.Context, detail string, roomy bool, clock time.Time, up time.Duration) layout.Dimensions {
+	var items []layout.FlexChild
+	if !v.opts.Embedded {
+		items = append(items, layout.Rigid(v.mark), layout.Rigid(layout.Spacer{Width: 18}.Layout))
+	}
+	if name := v.last.Host.Name; name != "" {
+		items = append(items, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return v.chip(gtx, name, detail, roomy, clock, up) }))
+	}
+	return layout.Flex{Alignment: layout.Middle}.Layout(gtx, items...)
+}
+
+// mark is sector's logo and name.
+func (v *View) mark(gtx layout.Context) layout.Dimensions {
+	th := v.th
+	return layout.Flex{Alignment: layout.Middle, Gap: gtx.Dp(9)}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return logo(gtx, gtx.Dp(18), th.Blue, th.Yellow, th.Green, th.Fg)
+		}),
+		layout.Rigid(v.text(theme.Size16-1, font.SemiBold, th.Fg, "sector")),
+	)
 }
 
 // chip is the host: monitor icon, name, the CPU and memory when roomy, then

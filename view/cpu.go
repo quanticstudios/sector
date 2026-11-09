@@ -92,7 +92,7 @@ func (v *View) cpuCard(gtx layout.Context) layout.Dimensions {
 	for i, s := range series {
 		b := band{c: cOut, name: "Everything else", vals: s}
 		if i < len(v.bands) {
-			b.c, b.name = palette[v.slots[v.bands[i]]], v.names[v.bands[i]]
+			b.c, b.name = palette[v.slots[v.bands[i]]], v.label(v.bands[i])
 		}
 		bands[i] = b
 		if len(s) > 0 {
@@ -173,6 +173,7 @@ func (v *View) cpuGraph(gtx layout.Context, h []entry, end time.Time, bands []ba
 	}
 	plot.Pop()
 	hline(gtx, 0, pw, int(y0), cAxis)
+	v.staleVeil(gtx, image.Rect(0, 0, pw, int(y0)), true)
 
 	ly := size.Y + gtx.Dp(2)
 	v.placeLabel(gtx, 0, ly, 0, 1, th.TextQuiet, "60 s ago")

@@ -82,6 +82,7 @@ func (v *View) spark(top, step, div float64, unit string, lines ...line) layout.
 			v.sparkLines(gtx, h, x, y, sh, lines)
 		}()
 		v.sparkTags(gtx, h, x, y, sh, lines)
+		v.staleVeil(gtx, image.Rect(0, 0, pw, sh), false)
 		return layout.Dimensions{Size: image.Pt(w, sh)}
 	}
 }

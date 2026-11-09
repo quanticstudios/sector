@@ -6,6 +6,7 @@ package view
 import (
 	"image"
 	"image/color"
+	"maps"
 	"sync/atomic"
 	"time"
 
@@ -35,6 +36,11 @@ type View struct {
 	interval atomic.Int64
 	paused   atomic.Bool
 
+	opts     Options
+	pushedAt time.Time // the local clock at the last Push, to tick the host chip's clock
+	labels   map[string]string
+	stale    time.Time // SetStale's since, zero while the data is fresh
+
 	hist  []entry
 	bands []string       // groups with a band in the CPU graph, busiest first
 	slots map[string]int // palette slot by group key
@@ -51,23 +57,39 @@ type View struct {
 // intervals are the choices of the title bar's segmented control.
 var intervals = [3]time.Duration{time.Second, 2 * time.Second, 5 * time.Second}
 
+// Options change how a View draws.
+type Options struct {
+	// Embedded leaves sector's mark and name out of the title bar, for a
+	// host whose own chrome already says what the view is.
+	Embedded bool
+}
+
 // New returns a View drawn in th, sampling every 2 seconds until the user
 // picks another interval.
-func New(th *theme.Theme) *View {
-	v := &View{th: th, slots: map[string]int{}, names: map[string]string{}}
+func New(th *theme.Theme) *View { return NewWith(th, Options{}) }
+
+// NewWith is New with opts.
+func NewWith(th *theme.Theme, opts Options) *View {
+	v := &View{th: th, opts: opts, slots: map[string]int{}, names: map[string]string{}}
 	v.interval.Store(int64(2 * time.Second))
 	v.filter.SingleLine = true
 	v.scroll.Axis = layout.Vertical
 	return v
 }
 
-// Push adds one sample and its process table. The host calls it once per
-// Interval, and not while Paused.
+// Push adds one sample and its process table, and clears SetStale. The
+// host calls it once per Interval, and not while Paused.
+//
+// The title bar's clock is s.Time, ticking on from when Push ran, in
+// s.Time's location: sample stamps it in the sampled machine's local zone,
+// and gob keeps that zone's UTC offset, so a remote machine's samples show
+// its own wall clock. A zero s.Time is stamped with the local clock.
 func (v *View) Push(s sample.Snapshot, t procs.Table) {
+	v.pushedAt = time.Now()
 	if s.Time.IsZero() {
-		s.Time = time.Now()
+		s.Time = v.pushedAt
 	}
-	v.last, v.table = s, t
+	v.last, v.table, v.stale = s, t, time.Time{}
 	e := entry{t: s.Time, cores: map[string]float64{}, drives: map[string][2]float64{}, nets: map[string][2]float64{},
 		used: float64(s.Mem.Used), cached: float64(stackedCache(s.Mem))}
 	live := map[string]bool{}
@@ -101,6 +123,72 @@ func (v *View) Interval() time.Duration { return time.Duration(v.interval.Load()
 
 // Paused reports whether the user paused sampling.
 func (v *View) Paused() bool { return v.paused.Load() }
+
+// SetLabels names groups by Group.Key, such as an agent by the host's tab
+// it runs in. A label replaces the group's repo and agent in the CPU
+// legend and tooltip and its name in the process table. A nil map clears
+// them. The view keeps a copy.
+func (v *View) SetLabels(m map[string]string) { v.labels = maps.Clone(m) }
+
+// SetStale says no sample has come since since, as when the sampled
+// machine is out of reach. The graphs stay as they are under a quiet "No
+// data since 20:41" until the next Push. A zero since clears it.
+func (v *View) SetStale(since time.Time) { v.stale = since }
+
+// Clicked returns the Group.Key of the group row the user clicked in the
+// process table since the last call, once. A click also opens or closes
+// the row.
+func (v *View) Clicked() (key string, ok bool) {
+	key, v.procs.clicked = v.procs.clicked, ""
+	return key, key != ""
+}
+
+// label is a group's name in the CPU legend and tooltip: the host's label
+// when it set one, else repo and agent.
+func (v *View) label(key string) string {
+	if l := v.labels[key]; l != "" {
+		return l
+	}
+	return v.names[key]
+}
+
+// clockAt is the sampled machine's clock and uptime at local time now,
+// run on from the last sample by the local clock.
+func (v *View) clockAt(now time.Time) (time.Time, time.Duration) {
+	if v.pushedAt.IsZero() {
+		return now, 0
+	}
+	ran := now.Sub(v.pushedAt)
+	up := v.last.Host.Uptime
+	if up > 0 {
+		up += ran
+	}
+	return v.last.Time.Add(ran), up
+}
+
+// staleText is SetStale's line, its time on the sampled machine's clock.
+func (v *View) staleText() string {
+	s := v.stale
+	if !v.last.Time.IsZero() {
+		s = s.In(v.last.Time.Location())
+	}
+	return "No data since " + s.Format("15:04")
+}
+
+// staleVeil dims r of a graph while the data is stale and, with say set,
+// writes staleText in its middle when it fits there. Only the CPU graph
+// says it: on the small graphs it would cover their tags.
+func (v *View) staleVeil(gtx layout.Context, r image.Rectangle, say bool) {
+	if v.stale.IsZero() {
+		return
+	}
+	paint.FillShape(gtx.Ops, theme.Alpha(v.th.Surface, 0.72), clip.Rect(r).Op())
+	if !say {
+		return
+	}
+	c := r.Min.Add(r.Max).Div(2)
+	v.placeText(gtx, theme.Size12, c.X, c.Y, 0.5, 0.5, v.th.Muted, v.staleText(), func(t image.Rectangle) bool { return t.In(r) })
+}
 
 // groupColor is a group's band color in the CPU graph, gray when the group
 // is folded into "Everything else".
@@ -244,7 +332,7 @@ func (v *View) procsCard(gtx layout.Context) layout.Dimensions {
 			defer op.Offset(image.Pt(-in, 0)).Push(gtx.Ops).Pop()
 			c := gtx
 			c.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X+2*in, gtx.Constraints.Max.Y))
-			v.procs.threads = v.threads()
+			v.procs.threads, v.procs.labels = v.threads(), v.labels
 			v.procs.Layout(c, v.th, v.table, v.filter.Text(), v.groupColor)
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		}))
