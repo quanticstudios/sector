@@ -7,6 +7,8 @@ eleven rows named `claude`, sector shows which agent, in which repo and
 worktree, is using the CPU and memory, and keeps command lines off the
 screen.
 
+![sector's dashboard in demo mode: CPU by group, cores, memory, disks, network and processes grouped by agent, repo and app](assets/screenshot.png)
+
 It is a native Gio window, drawn in pixels with pitwall's design language.
 The dashboard is also a Go package (`view`) with no window of its own, so
 pitwall can embed it and show several machines at once.
