@@ -1,6 +1,8 @@
 package view
 
 import (
+	"image/color"
+
 	"gioui.org/layout"
 
 	"github.com/quanticstudios/sector/procs"
@@ -14,6 +16,8 @@ type ProcPanel struct{}
 
 // Layout draws t filling gtx.Constraints.Max, keeping only groups whose
 // name, repo or branch contains filter (case-insensitive) when filter is set.
-func (p *ProcPanel) Layout(gtx layout.Context, th *theme.Theme, t procs.Table, filter string) layout.Dimensions {
+// swatch is a group's color in the CPU graph, by Group.Key; the panel draws
+// it beside the group's name so a row and its band read as one thing.
+func (p *ProcPanel) Layout(gtx layout.Context, th *theme.Theme, t procs.Table, filter string, swatch func(key string) color.NRGBA) layout.Dimensions {
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
