@@ -111,7 +111,7 @@ func (v *View) cpuCard(gtx layout.Context) layout.Dimensions {
 				now = b.vals[len(b.vals)-1]
 			}
 			items[i] = func(gtx layout.Context) layout.Dimensions {
-				return v.rich(gtx, theme.Size12, span{mark: swatch(b.c)}, span{s: b.name, c: th.Muted}, span{s: ppFormatPct(cpuPct(now, threads)) + "%", c: cDim})
+				return v.rich(gtx, theme.Size12, span{mark: swatch(b.c)}, span{s: b.name, c: th.Muted}, span{s: ppFormatPct(cpuPct(now, threads)) + "%", c: cDim, slot: "888%"})
 			}
 		}
 		return flow(gtx, gtx.Dp(14), gtx.Dp(4), items)

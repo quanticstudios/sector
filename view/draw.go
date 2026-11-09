@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math"
 	"slices"
+	"strings"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -20,7 +21,6 @@ import (
 // Colors the concept uses beyond the theme's tokens.
 var (
 	cTrack    = theme.Hex("#23262d") // empty part of a bar
-	cStrong   = theme.Hex("#292a2d") // the title bar's separator
 	cSoft     = theme.Hex("#b8bcc3") // numbers in a card header
 	cDim      = theme.Hex("#c9ccd2") // legend numbers, die names
 	cGridLine = theme.Hex("#22252c")
@@ -42,6 +42,12 @@ type span struct {
 	w    font.Weight
 	size unit.Sp // 0 for the row's size
 	mark layout.Widget
+	// slot is the widest form of a value that changes every tick, like
+	// "88:88:88". The span takes that much width whatever its text, so it
+	// never pushes its neighbors. The text sits at the slot's left, or
+	// at its right when right is set.
+	slot  string
+	right bool
 }
 
 // rich lays spans side by side on one baseline, a space apart.
@@ -57,10 +63,41 @@ func (v *View) rich(gtx layout.Context, size unit.Sp, spans ...span) layout.Dime
 			if sz == 0 {
 				sz = size
 			}
-			return v.th.Label(gtx, sz, s.w, s.c, s.s)
+			if s.slot == "" {
+				return v.th.Label(gtx, sz, s.w, s.c, s.s)
+			}
+			m := op.Record(gtx.Ops)
+			d := v.th.Label(gtx, sz, s.w, s.c, s.s)
+			call := m.Stop()
+			sw := v.slotWidth(gtx, sz, s.w, s.slot)
+			if s.right && d.Size.X < sw {
+				defer op.Offset(image.Pt(sw-d.Size.X, 0)).Push(gtx.Ops).Pop()
+			}
+			call.Add(gtx.Ops)
+			d.Size.X = max(d.Size.X, sw)
+			return d
 		})
 	}
 	return layout.Flex{Alignment: layout.Baseline, Gap: gtx.Sp(size) / 4}.Layout(gtx, children...)
+}
+
+// slotWidth is the width of tmpl with its digits set to whichever digit
+// makes it widest, since digits need not share one width.
+func (v *View) slotWidth(gtx layout.Context, size unit.Sp, w font.Weight, tmpl string) int {
+	gtx.Constraints = layout.Constraints{Max: image.Pt(big, big)}
+	widest := 0
+	for d := '0'; d <= '9'; d++ {
+		s := strings.Map(func(r rune) rune {
+			if r >= '0' && r <= '9' {
+				return d
+			}
+			return r
+		}, tmpl)
+		m := op.Record(gtx.Ops)
+		widest = max(widest, v.th.Label(gtx, size, w, color.NRGBA{}, s).Size.X)
+		m.Stop()
+	}
+	return widest
 }
 
 // text is one label as a widget.

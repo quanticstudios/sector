@@ -306,8 +306,8 @@ func (v *View) ioPair(r, w string, strong bool) []span {
 		wt = font.Medium
 	}
 	return []span{
-		{mark: ioMark(cIOOut, true)}, {s: "read", c: th.TextQuiet}, {s: r, c: th.Fg, w: wt},
-		{mark: ioMark(th.Blue, false)}, {s: "write", c: th.TextQuiet}, {s: w, c: th.Fg, w: wt}, {s: "MB/s", c: th.TextQuiet},
+		{mark: ioMark(cIOOut, true)}, {s: "read", c: th.TextQuiet}, {s: r, c: th.Fg, w: wt, slot: "888"},
+		{mark: ioMark(th.Blue, false)}, {s: "write", c: th.TextQuiet}, {s: w, c: th.Fg, w: wt, slot: "888", right: true}, {s: "MB/s", c: th.TextQuiet},
 	}
 }
 
@@ -358,7 +358,7 @@ func (v *View) drive(gtx layout.Context, d sample.Drive) []part {
 	top := diskTop(h, d.Name)
 	head := func(gtx layout.Context) layout.Dimensions {
 		busy := func(gtx layout.Context) layout.Dimensions {
-			return v.rich(gtx, theme.Size12, span{s: "busy", c: th.Muted}, span{s: strconv.Itoa(int(math.Round(d.Busy*100))) + "%", c: th.Fg, w: font.SemiBold})
+			return v.rich(gtx, theme.Size12, span{s: "busy", c: th.Muted}, span{s: strconv.Itoa(int(math.Round(d.Busy*100))) + "%", c: th.Fg, w: font.SemiBold, slot: "888%", right: true})
 		}
 		mounts := mountNames(d.Mounts)
 		if narrow(gtx) || mounts == "" {
@@ -416,7 +416,7 @@ func (v *View) netCard(gtx layout.Context) layout.Dimensions {
 				return v.rich(gtx, theme.Size12, left...)
 			}
 			return v.kv(left, span{s: "peak", c: th.TextQuiet}, span{s: bitsStr(peak), c: cSoft},
-				span{s: "· total", c: th.TextQuiet}, span{s: bytesStr(float64(total)), c: cSoft})(gtx)
+				span{s: "· total", c: th.TextQuiet}, span{s: bytesStr(float64(total)), c: cSoft, slot: "888 MiB", right: true})(gtx)
 		}
 	}
 	return v.card(gtx, func(gtx layout.Context) layout.Dimensions {

@@ -63,7 +63,7 @@ func (v *View) coresCard(gtx layout.Context) layout.Dimensions {
 		if len(right) > 0 {
 			right = append(right, span{s: "·", c: th.TextQuiet})
 		}
-		right = append(right, span{s: fmt.Sprintf("%.0f W", cpu.PowerW), c: cSoft})
+		right = append(right, span{s: fmt.Sprintf("%.0f W", cpu.PowerW), c: cSoft, slot: "888 W", right: true})
 	}
 	ds := dies(cpu)
 	smt := 0
@@ -123,7 +123,7 @@ func (v *View) temp(c float64) []span {
 		d := icon(gtx, icThermo, gtx.Dp(13), col)
 		d.Baseline = gtx.Dp(2)
 		return d
-	}}, {s: fmt.Sprintf("%.0f °C", c), c: col, w: font.SemiBold}}
+	}}, {s: fmt.Sprintf("%.0f °C", c), c: col, w: font.SemiBold, slot: "88 °C", right: true}}
 }
 
 // chipCols is how many cores a chip map row holds, and chipLines how many
