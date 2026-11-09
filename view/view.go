@@ -239,6 +239,7 @@ func (v *View) procsCard(gtx layout.Context) layout.Dimensions {
 			defer op.Offset(image.Pt(-in, 0)).Push(gtx.Ops).Pop()
 			c := gtx
 			c.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X+2*in, gtx.Constraints.Max.Y))
+			v.procs.threads = v.threads()
 			v.procs.Layout(c, v.th, v.table, v.filter.Text(), v.groupColor)
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		}))
