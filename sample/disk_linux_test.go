@@ -19,15 +19,15 @@ func TestFoldMounts(t *testing.T) {
 		"nvme0n1": {"/", "/boot", "/home", "/var/log"},
 		"nvme1n1": {"/home/dev/my projects", "/srv/data"},
 	}
-	wantFS := map[string][]string{
-		"nvme0n1": {"/", "/boot"},
-		"nvme1n1": {"/srv/data"},
+	wantFS := map[string][]fsShare{
+		"nvme0n1": {{"/", 1}, {"/boot", 1}},
+		"nvme1n1": {{"/srv/data", 1}},
 	}
 	if !reflect.DeepEqual(points, wantPoints) {
 		t.Errorf("points %q, want %q", points, wantPoints)
 	}
 	if !reflect.DeepEqual(fs, wantFS) {
-		t.Errorf("filesystems %q, want %q", fs, wantFS)
+		t.Errorf("filesystems %v, want %v", fs, wantFS)
 	}
 }
 
@@ -66,5 +66,38 @@ func TestDriveRates(t *testing.T) {
 	drives, _ := s.readDrives(0)
 	if drives[0].ReadBps != 0 || drives[0].Busy != 0 {
 		t.Errorf("first sample has rates: %+v", drives[0])
+	}
+}
+
+func TestLVMOverTwoDisks(t *testing.T) {
+	// vg-data spans sda1 and sda2 (100 sectors each) and sdb1 (200), so
+	// half of it is on each disk. It is mounted twice; each disk lists both
+	// points and counts the filesystem once.
+	const b = "sys/block/"
+	useTree(t, writeTree(t, map[string]string{
+		b + "sda/device": "", b + "sda/dev": "8:0",
+		b + "sda/sda1/partition": "1", b + "sda/sda1/dev": "8:1", b + "sda/sda1/size": "100",
+		b + "sda/sda2/partition": "2", b + "sda/sda2/dev": "8:2", b + "sda/sda2/size": "100",
+		b + "sdb/device": "", b + "sdb/dev": "8:16",
+		b + "sdb/sdb1/partition": "1", b + "sdb/sdb1/dev": "8:17", b + "sdb/sdb1/size": "200",
+		b + "dm-0/dev": "254:0", b + "dm-0/dm/name": "vg-data",
+		b + "dm-0/slaves/sda1": "", b + "dm-0/slaves/sda2": "", b + "dm-0/slaves/sdb1": "",
+		"proc/diskstats": "",
+		"proc/self/mountinfo": "40 1 254:0 / /srv/vol rw - ext4 /dev/mapper/vg-data rw\n" +
+			"41 40 254:0 /sub /srv/vol/sub rw - ext4 /dev/mapper/vg-data rw\n",
+	}))
+	stubFS(t, map[string][3]uint64{"/srv/vol": {400, 100, 300}})
+	var s sampler
+	drives, err := s.readDrives(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mounts := []string{"/srv/vol", "/srv/vol/sub"}
+	want := []Drive{
+		{Name: "sda", Mounts: mounts, Size: 200, Used: 50, Free: 150},
+		{Name: "sdb", Mounts: mounts, Size: 200, Used: 50, Free: 150},
+	}
+	if !reflect.DeepEqual(drives, want) {
+		t.Errorf("got %+v, want %+v", drives, want)
 	}
 }
