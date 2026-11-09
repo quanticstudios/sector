@@ -19,6 +19,7 @@ type fake struct {
 	threads      int
 	exe, cwd     string
 	argv         []string
+	unit         string // its systemd unit; "" writes no cgroup file
 }
 
 // writeProc writes a fake /proc holding ps at uptime seconds, and points
@@ -60,6 +61,9 @@ func writeProc(t *testing.T, root string, up float64, ps map[int]fake) {
 		}
 		if p.cwd != "" {
 			link(p.cwd, d+"/cwd")
+		}
+		if p.unit != "" {
+			w(d+"/cgroup", "0::/user.slice/user-1000.slice/user@1000.service/app.slice/"+p.unit+"\n")
 		}
 	}
 	old := procRoot
@@ -141,35 +145,21 @@ func pids(g *Group) map[int]bool {
 	return m
 }
 
-func TestScanGroups(t *testing.T) {
-	ps := machine(t)
-	writeProc(t, filepath.Join(t.TempDir(), "proc"), 100, ps)
-	tb, err := NewScanner().Scan()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tb.Procs != len(ps) || tb.Threads != len(ps)+11 {
-		t.Errorf("Procs, Threads = %d, %d, want %d, %d", tb.Procs, tb.Threads, len(ps), len(ps)+11)
-	}
-	for _, g := range tb.Groups {
-		if g.Cores != 0 {
-			t.Errorf("first scan: %s has %v cores", g.Key, g.Cores)
-		}
-	}
-	want := []struct {
-		key, name, repo, branch string
-		kind                    Kind
-		pids                    []int
-	}{
-		{"agent:211:1000", "claude", "acme-api", "", Agent, []int{211, 212, 213}},
-		{"agent:214:0", "codex", "", "", Agent, []int{214, 215}},
-		{"agent:221:2000", "claude", "web-app", "fix/login", Agent, []int{221, 222, 223}},
-		{"app:Chromium", "Chromium", "", "", App, []int{300, 301}},
-		{"system", "System", "", "", System, []int{1, 2, 50, 90}},
-		{"other", "Everything else", "", "", Other, []int{100, 200, 210, 220, 400}},
-	}
+type wantGroup struct {
+	key, name, repo, branch string
+	kind                    Kind
+	pids                    []int
+}
+
+// checkGroups checks tb holds exactly the groups in want.
+func checkGroups(t *testing.T, tb Table, want []wantGroup) {
+	t.Helper()
 	if len(tb.Groups) != len(want) {
-		t.Errorf("got %d groups, want %d", len(tb.Groups), len(want))
+		keys := []string{}
+		for _, g := range tb.Groups {
+			keys = append(keys, g.Key)
+		}
+		t.Errorf("got groups %v, want %d", keys, len(want))
 	}
 	for _, w := range want {
 		g := find(tb, w.key)
@@ -191,6 +181,121 @@ func TestScanGroups(t *testing.T) {
 			if !got[p] {
 				t.Errorf("%s: missing pid %d", w.key, p)
 			}
+		}
+	}
+}
+
+// TestScanDesktop scans a Hyprland session started through uwsm, its
+// apps in systemd user scopes.
+func TestScanDesktop(t *testing.T) {
+	_, web := repos(t)
+	big := uint64(300*mib) / uint64(os.Getpagesize()) // keeps a group from folding
+	wm := "wayland-wm@hyprland.desktop.service"
+	spotify1, spotify2 := "app-flatpak-com.spotify.Client-1234.scope", "app-flatpak-com.spotify.Client-5678.scope"
+	script := "app-Hyprland-autostart.sh-c0ffee.scope"
+	term := "app-Hyprland-org.acme.Term-ab12cd.scope"
+	ps := map[int]fake{
+		1:   {comm: "systemd", other: true, rss: big},
+		100: {ppid: 1, comm: "systemd", unit: "init.scope"},
+		101: {ppid: 100, comm: "(sd-pam)", unit: "init.scope"},
+		// The compositor and what it starts itself.
+		110: {ppid: 100, comm: "start-hyprland", unit: wm},
+		111: {ppid: 110, comm: "Hyprland", unit: wm, rss: big},
+		112: {ppid: 111, comm: "Xwayland", unit: wm, rss: big},
+		113: {ppid: 111, comm: "launch-bar", exe: "/usr/bin/bash", unit: wm},
+		114: {ppid: 113, comm: "statusbar", unit: wm, rss: big},
+		109: {ppid: 114, comm: "wl-paste", unit: wm}, // a lower pid than its parent
+		// One Flatpak app in two scopes, bwrap at each root.
+		120: {ppid: 100, comm: "bwrap", unit: spotify1},
+		121: {ppid: 120, comm: "xdg-dbus-proxy", unit: spotify1},
+		122: {ppid: 120, comm: "bwrap", unit: spotify1},
+		123: {ppid: 122, comm: "spotify", unit: spotify1, rss: big},
+		130: {ppid: 100, comm: "bwrap", unit: spotify2},
+		131: {ppid: 130, comm: "spotify", unit: spotify2},
+		// An autostart script's scope: the script is gone, its apps remain.
+		140: {ppid: 100, comm: "chromium", unit: script, rss: big},
+		141: {ppid: 140, comm: "chromium", unit: script},
+		145: {ppid: 100, comm: "notes", unit: script, rss: big},
+		// A terminal in its scope with an agent in it.
+		150: {ppid: 111, comm: "term", unit: term, rss: big},
+		151: {ppid: 150, comm: "zsh", unit: term},
+		152: {ppid: 151, comm: "claude", exe: "/opt/claude/2.1.0", cwd: web, unit: term, start: 3000},
+		153: {ppid: 152, comm: "node", unit: term},
+		// A user service.
+		160: {ppid: 100, comm: "acme-sync-dae", exe: "/usr/bin/bash", unit: "acme-sync.service", rss: big},
+	}
+	writeProc(t, filepath.Join(t.TempDir(), "proc"), 100, ps)
+	tb, err := NewScanner().Scan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGroups(t, tb, []wantGroup{
+		{"agent:152:3000", "claude", "web-app", "fix/login", Agent, []int{152, 153}},
+		{"app:Hyprland", "Hyprland", "", "", App, []int{110, 111}},
+		{"app:Xwayland", "Xwayland", "", "", App, []int{112}},
+		{"app:statusbar", "statusbar", "", "", App, []int{109, 113, 114}},
+		{"app:Spotify", "Spotify", "", "", App, []int{120, 121, 122, 123, 130, 131}},
+		{"app:Chromium", "Chromium", "", "", App, []int{140, 141}},
+		{"app:notes", "notes", "", "", App, []int{145}},
+		{"app:Term", "Term", "", "", App, []int{150, 151}},
+		{"app:acme-sync", "acme-sync", "", "", App, []int{160}},
+		{"system", "System", "", "", System, []int{1, 100, 101}},
+	})
+}
+
+func TestAppOfUnit(t *testing.T) {
+	for unit, want := range map[string]string{
+		"app-flatpak-com.spotify.Client-1234.scope":      "Spotify",
+		`app-Hyprland-acme\x2dnotes-0a1b2c3d.scope`:      "acme-notes",
+		"app-org.chromium.Chromium-4214.scope":           "Chromium",
+		"app-gnome-org.acme.Editor-99.scope":             "Editor",
+		"app-billing@autostart.service":                  "billing",
+		"app-com.acme.Mail@0f1e2d.service":               "Mail",
+		"app-billing.scope":                              "billing",
+		"snap.billing.daemon-6f1d2e3a.scope":             "billing",
+		"acme-sync.service":                              "acme-sync",
+		"dbus-:1.26-org.acme.Registry@0.service":         "Registry",
+		"app-Hyprland-autostart.sh-c0ffee.scope":         "",
+		"app-Hyprland-uwsm-c0ffee.scope":                 "",
+		"app-dbus\\x2d:1.26\\x2dorg.acme.Registry.slice": "",
+		"session-1.scope":                                "",
+		"init.scope":                                     "",
+		"":                                               "",
+	} {
+		if got := appOfUnit(unit); got != want {
+			t.Errorf("appOfUnit(%q) = %q, want %q", unit, got, want)
+		}
+	}
+}
+
+func TestScanGroups(t *testing.T) {
+	ps := machine(t)
+	writeProc(t, filepath.Join(t.TempDir(), "proc"), 100, ps)
+	tb, err := NewScanner().Scan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tb.Procs != len(ps) || tb.Threads != len(ps)+11 {
+		t.Errorf("Procs, Threads = %d, %d, want %d, %d", tb.Procs, tb.Threads, len(ps), len(ps)+11)
+	}
+	for _, g := range tb.Groups {
+		if g.Cores != 0 {
+			t.Errorf("first scan: %s has %v cores", g.Key, g.Cores)
+		}
+	}
+	// No fake process has a cgroup: every app is named by its tree.
+	checkGroups(t, tb, []wantGroup{
+		{"agent:211:1000", "claude", "acme-api", "", Agent, []int{211, 212, 213}},
+		{"agent:214:0", "codex", "", "", Agent, []int{214, 215}},
+		{"agent:221:2000", "claude", "web-app", "fix/login", Agent, []int{221, 222, 223}},
+		{"app:Chromium", "Chromium", "", "", App, []int{300, 301}},
+		{"system", "System", "", "", System, []int{1, 2, 50, 90, 100}},
+		{"other", "Everything else", "", "", Other, []int{200, 210, 220, 400}},
+	})
+	// ghostty and tinyapp folded.
+	for _, g := range tb.Groups {
+		if want := map[Kind]int{Other: 2}[g.Kind]; g.Folded != want {
+			t.Errorf("%s: Folded = %d, want %d", g.Key, g.Folded, want)
 		}
 	}
 	if last := tb.Groups[len(tb.Groups)-1]; last.Key != "other" {
