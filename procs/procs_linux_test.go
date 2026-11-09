@@ -194,6 +194,7 @@ func TestScanDesktop(t *testing.T) {
 	spotify1, spotify2 := "app-flatpak-com.spotify.Client-1234.scope", "app-flatpak-com.spotify.Client-5678.scope"
 	script := "app-Hyprland-autostart.sh-c0ffee.scope"
 	term := "app-Hyprland-org.acme.Term-ab12cd.scope"
+	gtkScope, setsidScope := `app-Hyprland-gtk\x2dlaunch-beef01.scope`, "app-Hyprland-setsid-beef02.scope"
 	ps := map[int]fake{
 		1:   {comm: "systemd", other: true, rss: big},
 		100: {ppid: 1, comm: "systemd", unit: "init.scope"},
@@ -221,6 +222,13 @@ func TestScanDesktop(t *testing.T) {
 		151: {ppid: 150, comm: "zsh", unit: term},
 		152: {ppid: 151, comm: "claude", exe: "/opt/claude/2.1.0", cwd: web, unit: term, start: 3000},
 		153: {ppid: 152, comm: "node", unit: term},
+		// Apps the launcher started through gtk-launch, and through setsid
+		// and nohup, in scopes named after the launcher.
+		170: {ppid: 111, comm: "gtk-launch", unit: gtkScope},
+		171: {ppid: 170, comm: "editor", unit: gtkScope, rss: big},
+		180: {ppid: 111, comm: "setsid", unit: setsidScope},
+		181: {ppid: 180, comm: "nohup", unit: setsidScope},
+		182: {ppid: 181, comm: "billing", unit: setsidScope, rss: big},
 		// A user service.
 		160: {ppid: 100, comm: "acme-sync-dae", exe: "/usr/bin/bash", unit: "acme-sync.service", rss: big},
 	}
@@ -239,6 +247,8 @@ func TestScanDesktop(t *testing.T) {
 		{"app:notes", "notes", "", "", App, []int{145}},
 		{"app:Term", "Term", "", "", App, []int{150, 151}},
 		{"app:acme-sync", "acme-sync", "", "", App, []int{160}},
+		{"app:editor", "editor", "", "", App, []int{170, 171}},
+		{"app:billing", "billing", "", "", App, []int{180, 181, 182}},
 		{"system", "System", "", "", System, []int{1, 100, 101}},
 	})
 }
@@ -257,6 +267,8 @@ func TestAppOfUnit(t *testing.T) {
 		"dbus-:1.26-org.acme.Registry@0.service":         "Registry",
 		"app-Hyprland-autostart.sh-c0ffee.scope":         "",
 		"app-Hyprland-uwsm-c0ffee.scope":                 "",
+		`app-Hyprland-gtk\x2dlaunch-c0ffee.scope`:        "",
+		"app-Hyprland-xdg-open-c0ffee.scope":             "",
 		"app-dbus\\x2d:1.26\\x2dorg.acme.Registry.slice": "",
 		"session-1.scope":                                "",
 		"init.scope":                                     "",
