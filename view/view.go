@@ -51,11 +51,11 @@ type View struct {
 // intervals are the choices of the title bar's segmented control.
 var intervals = [3]time.Duration{time.Second, 2 * time.Second, 5 * time.Second}
 
-// New returns a View drawn in th, sampling every second until the user
+// New returns a View drawn in th, sampling every 2 seconds until the user
 // picks another interval.
 func New(th *theme.Theme) *View {
 	v := &View{th: th, slots: map[string]int{}, names: map[string]string{}}
-	v.interval.Store(int64(time.Second))
+	v.interval.Store(int64(2 * time.Second))
 	v.filter.SingleLine = true
 	v.scroll.Axis = layout.Vertical
 	return v
