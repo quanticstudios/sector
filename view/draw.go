@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"slices"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -83,56 +84,129 @@ func spread(gtx layout.Context, left, right layout.Widget) layout.Dimensions {
 }
 
 // part is one piece of a column: rigid at its own height, or flex sharing
-// the height left over, never under min px.
+// the height left over, never under min px. When the column is shorter
+// than its parts, each part shrinks toward its floor, and parts with a drop
+// rank are left out whole, highest rank first, while even the floors do
+// not fit.
 type part struct {
-	w    layout.Widget
-	flex bool
-	min  int
+	w     layout.Widget
+	flex  bool
+	min   int
+	floor int // -1: no shrinking
+	drop  int // 0: never left out
 }
 
-func rigid(w layout.Widget) part           { return part{w: w} }
-func flexed(min int, w layout.Widget) part { return part{w: w, flex: true, min: min} }
+func rigid(w layout.Widget) part           { return part{w: w, floor: -1} }
+func flexed(min int, w layout.Widget) part { return part{w: w, flex: true, min: min, floor: -1} }
 func gap(h int) part {
-	return part{w: func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: image.Pt(0, h)} }}
+	return rigid(func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: image.Pt(0, h)} })
+}
+
+// to lets p shrink to floor px. The widget is then laid out at an exact
+// height between the two and must fit itself into it.
+func (p part) to(floor int) part { p.floor = floor; return p }
+
+// opt lets the column leave p out when short, rank by rank.
+func (p part) opt(rank int) part { p.drop = rank; return p }
+
+// squeeze fits heights into room: nat when they fit, floor when even
+// that does not, and in between each one gives up the same share of
+// its slack.
+func squeeze(nat, floor []int, room int) []int {
+	h := slices.Clone(nat)
+	total, slack := 0, 0
+	for i := range nat {
+		total += nat[i]
+		slack += max(0, nat[i]-floor[i])
+	}
+	over := total - room
+	if over <= 0 || slack == 0 {
+		return h
+	}
+	over = min(over, slack)
+	run := 0
+	for i := range h {
+		s := max(0, nat[i]-floor[i])
+		h[i] -= over*(run+s)/slack - over*run/slack
+		run += s
+	}
+	return h
 }
 
 // column stacks parts in the full width and fills gtx.Constraints.Min.Y,
-// giving the spare height to the flex parts in equal shares.
+// giving the spare height to the flex parts in equal shares. When
+// gtx.Constraints.Max.Y is less than the parts need, it squeezes them.
 func column(gtx layout.Context, parts ...part) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	calls := make([]op.CallOp, len(parts))
-	hs := make([]int, len(parts))
-	used, nflex := 0, 0
+	nat := make([]int, len(parts))
+	floor := make([]int, len(parts))
 	for i, p := range parts {
 		if p.flex {
-			nflex++
-			used += p.min
-			continue
+			nat[i] = p.min
+		} else {
+			c := gtx
+			c.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, big)}
+			m := op.Record(gtx.Ops)
+			nat[i] = p.w(c).Size.Y
+			calls[i] = m.Stop()
 		}
-		c := gtx
-		c.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, big)}
-		m := op.Record(gtx.Ops)
-		hs[i] = p.w(c).Size.Y
-		calls[i] = m.Stop()
-		used += hs[i]
+		floor[i] = nat[i]
+		if p.floor >= 0 {
+			floor[i] = min(p.floor, nat[i])
+		}
 	}
-	extra := max(0, gtx.Constraints.Min.Y-used)
-	for i, p := range parts {
-		if !p.flex {
-			continue
+	room := gtx.Constraints.Max.Y
+	sum := func(hs []int) (n int) {
+		for _, h := range hs {
+			n += h
 		}
-		share := extra / nflex
-		extra -= share
-		nflex--
-		hs[i] = p.min + share
-		c := gtx
-		c.Constraints = layout.Exact(image.Pt(w, hs[i]))
-		m := op.Record(gtx.Ops)
-		p.w(c)
-		calls[i] = m.Stop()
+		return n
+	}
+	for sum(nat) > room && sum(floor) > room {
+		rank := 0
+		for i, p := range parts {
+			if nat[i] > 0 {
+				rank = max(rank, p.drop)
+			}
+		}
+		if rank == 0 {
+			break
+		}
+		for i, p := range parts {
+			if p.drop == rank {
+				nat[i], floor[i] = 0, 0
+			}
+		}
+	}
+	hs := squeeze(nat, floor, room)
+	extra := max(0, gtx.Constraints.Min.Y-sum(hs))
+	nflex := 0
+	for _, p := range parts {
+		if p.flex {
+			nflex++
+		}
+	}
+	for i, p := range parts {
+		if p.flex {
+			share := extra / nflex
+			extra -= share
+			nflex--
+			hs[i] += share
+		}
+		if p.flex || hs[i] != nat[i] && hs[i] > 0 {
+			c := gtx
+			c.Constraints = layout.Exact(image.Pt(w, hs[i]))
+			m := op.Record(gtx.Ops)
+			p.w(c)
+			calls[i] = m.Stop()
+		}
 	}
 	y := 0
 	for i := range parts {
+		if hs[i] == 0 && !parts[i].flex {
+			continue
+		}
 		t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 		calls[i].Add(gtx.Ops)
 		t.Pop()

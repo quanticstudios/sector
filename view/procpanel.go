@@ -3,6 +3,7 @@ package view
 import (
 	"image"
 	"image/color"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,7 @@ type ProcPanel struct {
 	hovers   map[string]*gesture.Hover    // member rows, by Group.Key and comm
 	heads    [ppNumCols]widget.Clickable
 	list     widget.List
+	threads  int // the machine's logical CPUs, what 100% CPU stands for
 }
 
 // ppCol is a numeric column. Its zero value, CPU, keeps the table's own
@@ -63,9 +65,9 @@ type ppCell struct {
 // ppCols is the numeric columns shown at a panel width, left to right.
 func ppCols(width unit.Dp) []ppCell {
 	if width < ppNarrow {
-		return []ppCell{{ppCPU, "CPU, cores", 96}, {ppMem, "Memory", 76}}
+		return []ppCell{{ppCPU, "CPU", 96}, {ppMem, "Memory", 76}}
 	}
-	return []ppCell{{ppProcs, "Procs", 64}, {ppThreads, "Threads", 76}, {ppCPU, "CPU, cores", 104}, {ppMem, "Memory", 84}}
+	return []ppCell{{ppProcs, "Procs", 64}, {ppThreads, "Threads", 76}, {ppCPU, "CPU", 104}, {ppMem, "Memory", 84}}
 }
 
 // ppMatch reports whether g's name, agent, repo or branch contains filter,
@@ -160,20 +162,18 @@ func ppKidNote(k ppKid) string {
 	return ppFormatInt(k.N) + " workers"
 }
 
-// ppBarScale is the cores a full CPU bar stands for: the busiest group
-// rounded up to the next 2, 5 or 10 times a power of ten, never under 2.
-// The step keeps the scale still while load wobbles, the headroom keeps
-// the busiest bar short of full (8.4 cores draws against 10, as in the
-// concept), and the floor keeps an idle machine's bars near empty.
+// ppBarScale is the percent of the machine a full CPU bar stands for: the
+// busiest group's percent rounded up to 5, 10, 20, 50 or 100. The step
+// keeps the scale still while load wobbles, the headroom keeps the busiest
+// bar short of full (26% draws against 50), and the floor keeps an idle
+// machine's bars near empty.
 func ppBarScale(busiest float64) float64 {
-	for p := 1.0; p < 1e6; p *= 10 {
-		for _, m := range []float64{2, 5, 10} {
-			if !(busiest > m*p) { // NaN lands on the floor
-				return m * p
-			}
+	for _, m := range []float64{5, 10, 20, 50} {
+		if !(busiest > m) { // NaN lands on the floor
+			return m
 		}
 	}
-	return busiest
+	return 100
 }
 
 // rows flattens t into the lines to draw, after filter, sort and expansion.
@@ -211,13 +211,20 @@ func (p *ProcPanel) toggle(key string) {
 	p.expanded[key] = !p.expanded[key]
 }
 
-// ppFormatCores is CPU in threads' worth, one decimal: "3.2".
-func ppFormatCores(c float64) string {
-	if c < 0.05 {
-		c = 0 // no "-0.0"
+// ppFormatPct is a percent of the machine without its sign, one decimal
+// under 10: "3.2", "47".
+func ppFormatPct(p float64) string {
+	if p < 0.05 {
+		p = 0 // no "-0.0"
 	}
-	return strconv.FormatFloat(c, 'f', 1, 64)
+	if math.Round(p*10) < 100 {
+		return strconv.FormatFloat(p, 'f', 1, 64)
+	}
+	return strconv.FormatFloat(p, 'f', 0, 64)
 }
+
+// cpuPct is cores as a percent of threads logical CPUs.
+func cpuPct(cores float64, threads int) float64 { return cores * 100 / float64(max(1, threads)) }
 
 // ppFormatMem is bytes as "1.2 GiB" from one GiB up, else "512 MiB".
 func ppFormatMem(b uint64) string {
@@ -273,9 +280,9 @@ func (p *ProcPanel) Layout(gtx layout.Context, th *theme.Theme, t procs.Table, f
 	// The bar scale comes from the whole table, so filtering doesn't rescale.
 	var busiest float64
 	for _, g := range t.Groups {
-		busiest = max(busiest, g.Cores)
+		busiest = max(busiest, cpuPct(g.Cores, p.threads))
 	}
-	d := &ppDraw{gtx: gtx, th: th, cols: cols, w: size.X, swatch: swatch, maxCores: ppBarScale(busiest)}
+	d := &ppDraw{gtx: gtx, th: th, cols: cols, w: size.X, swatch: swatch, threads: p.threads, maxPct: ppBarScale(busiest)}
 
 	headH, footH := gtx.Dp(32), gtx.Dp(30)
 	p.header(d, headH)
@@ -340,12 +347,13 @@ func ppKidKey(r ppRow) string { return r.g.Key + "\x00" + r.kid.Comm }
 
 // ppDraw carries what every row needs.
 type ppDraw struct {
-	gtx      layout.Context
-	th       *theme.Theme
-	cols     []ppCell
-	w        int
-	swatch   func(string) color.NRGBA
-	maxCores float64
+	gtx     layout.Context
+	th      *theme.Theme
+	cols    []ppCell
+	w       int
+	swatch  func(string) color.NRGBA
+	threads int
+	maxPct  float64
 }
 
 // cell returns column i's left edge and width in px, right to left from
@@ -438,7 +446,7 @@ func (p *ProcPanel) row(d *ppDraw, r ppRow) layout.Dimensions {
 			case ppThreads:
 				s = ppFormatInt(r.kid.Threads)
 			case ppCPU:
-				s = ppFormatCores(r.kid.Cores)
+				s = ppFormatPct(cpuPct(r.kid.Cores, d.threads)) + "%"
 			case ppMem:
 				s = ppFormatMem(r.kid.RSS)
 			}
@@ -497,7 +505,8 @@ func (p *ProcPanel) row(d *ppDraw, r ppRow) layout.Dimensions {
 			case ppMem:
 				ppText(gtx, th, bold, theme.Size13, th.Fg, ppFormatMem(g.RSS), x, w, base, 0, true)
 			case ppCPU:
-				tw := ppText(gtx, th, bold, theme.Size13, th.Fg, ppFormatCores(g.Cores), x, w, base, 0, true)
+				gp := cpuPct(g.Cores, d.threads)
+				tw := ppText(gtx, th, bold, theme.Size13, th.Fg, ppFormatPct(gp)+"%", x, w, base, 0, true)
 				bw, bh := gtx.Dp(40), gtx.Dp(4)
 				bx, by := x+w-tw-gtx.Dp(8)-bw, (h-bh)/2
 				if bx >= x {
@@ -506,7 +515,7 @@ func (p *ProcPanel) row(d *ppDraw, r ppRow) layout.Dimensions {
 					if fill.A == 0 {
 						fill = theme.Mix(th.Surface, th.Muted, 0.4)
 					}
-					if fw := min(bw, int(float64(bw)*g.Cores/d.maxCores+0.5)); fw > 0 {
+					if fw := min(bw, int(float64(bw)*gp/d.maxPct+0.5)); fw > 0 {
 						paint.FillShape(gtx.Ops, fill, clip.UniformRRect(image.Rect(bx, by, bx+fw, by+bh), min(bh, fw)/2).Op(gtx.Ops))
 					}
 				}

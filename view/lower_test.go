@@ -1,6 +1,7 @@
 package view
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/quanticstudios/sector/sample"
@@ -46,5 +47,32 @@ func TestStackedCache(t *testing.T) {
 		if got := stackedCache(c.m); got != c.want {
 			t.Errorf("%+v: stacked %d, want %d", c.m, got, c.want)
 		}
+	}
+}
+
+func TestTicks(t *testing.T) {
+	for _, c := range []struct {
+		top, step float64
+		want      []string
+	}{
+		{60.47, niceStep(60.47 / 4), []string{"15", "30", "45"}}, // memory, GiB
+		{15.5, niceStep(15.5 / 4), []string{"4", "8", "12"}},
+		{7.7, niceStep(7.7 / 4), []string{"2", "4", "6"}},
+		{32, 8, []string{"8", "16", "24"}}, // a disk ceiling in quarters
+		{1, 0.25, []string{"0.25", "0.5", "0.75"}},
+		{58, niceStep(58.0 / 4), []string{"15", "30", "45"}}, // 45 is 13 under 58, more than half a step
+		{52, niceStep(52.0 / 4), []string{"15", "30"}},       // 45 is within half a step of 52
+		{10, 0, nil},
+	} {
+		var got []string
+		for _, v := range ticks(c.top, c.step) {
+			got = append(got, tickStr(v))
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("ticks(%v, %v) = %v, want %v", c.top, c.step, got, c.want)
+		}
+	}
+	if s := tickStr(60.47) + " " + tickStr(2.5); s != "60.5 2.5" {
+		t.Errorf("tickStr: %q", s)
 	}
 }

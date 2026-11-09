@@ -105,6 +105,7 @@ func (d *demo) next() (sample.Snapshot, procs.Table) {
 		s.CPU.Cores = append(s.CPU.Cores, sample.Core{ID: c, Die: c / 8, Threads: []int{c, c + 16}})
 	}
 	s.CPU.Dies = []sample.Die{{ID: 0, TempC: d.walk("t0", 72, 2, 40)}, {ID: 1, TempC: d.walk("t1", 52, 2, 40)}}
+	s.CPU.TempC = d.walk("tctl", 74, 2, 40)
 	s.CPU.MHz = d.walk("mhz", 5400, 150, 3000)
 	s.CPU.PowerW = d.walk("w", 116, 8, 30)
 

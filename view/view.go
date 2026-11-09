@@ -131,29 +131,38 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 }
 
 // dash lays the cards out on the grid in avail px of height, or taller
-// when they need more and the host scrolls.
+// when even squeezed they need more and the host scrolls.
 func (v *View) dash(gtx layout.Context, avail int) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	pad, gp := gtx.Dp(12), gtx.Dp(10)
 	p, fr := places(float32(w) / gtx.Metric.PxPerDp)
 	cards := [nCards]layout.Widget{v.cpuCard, v.coresCard, v.memCard, v.diskCard, v.netCard, v.procsCard}
 
-	var nat [nCards]int
-	v.measuring = true
-	for i, card := range cards {
+	// Each card is measured as tall as it wants, and as short as it can
+	// squeeze, which only the wide layout uses.
+	measure := func(i int, maxY int) int {
 		_, cw := colSpan(p[i], w, pad, gp)
 		c := gtx
-		c.Constraints = layout.Constraints{Min: image.Pt(cw, 0), Max: image.Pt(cw, big)}
+		c.Constraints = layout.Constraints{Min: image.Pt(cw, 0), Max: image.Pt(cw, maxY)}
 		m := op.Record(gtx.Ops)
-		nat[i] = card(c).Size.Y
-		m.Stop()
+		defer m.Stop()
+		return cards[i](c).Size.Y
+	}
+	var nat, floor [nCards]int
+	v.measuring = true
+	for i := range cards {
+		nat[i] = measure(i, big)
+		floor[i] = nat[i]
+		if fr >= 0 {
+			floor[i] = measure(i, 0)
+		}
 	}
 	v.measuring = false
 	if fr < 0 {
 		nat[cardProcs] = max(nat[cardProcs], gtx.Dp(320))
 	}
 
-	rows := rowHeights(p, nat, avail-2*pad, gp, fr)
+	rows := rowHeights(p, nat, floor, avail-2*pad, gp, fr)
 	ys := make([]int, len(rows)+1)
 	ys[0] = pad
 	for r, h := range rows {
@@ -171,8 +180,9 @@ func (v *View) dash(gtx layout.Context, avail int) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(w, ys[len(rows)]-gp+pad)}
 }
 
-// card draws the surface of a card and body inside its padding. The card
-// is gtx.Constraints.Min.Y tall, or as tall as body when that is 0.
+// card draws the surface of a card and body inside its padding, clipped to
+// the card. The card is gtx.Constraints.Min.Y tall, or as tall as body when
+// that is 0.
 func (v *View) card(gtx layout.Context, body layout.Widget) layout.Dimensions {
 	pt, px, pb := gtx.Dp(11), gtx.Dp(12), gtx.Dp(12)
 	w := gtx.Constraints.Max.X
@@ -184,8 +194,12 @@ func (v *View) card(gtx layout.Context, body layout.Widget) layout.Dimensions {
 	m := op.Record(gtx.Ops)
 	d := body(c)
 	call := m.Stop()
-	h := max(gtx.Constraints.Min.Y, d.Size.Y+pt+pb)
+	h := d.Size.Y + pt + pb
+	if gtx.Constraints.Min.Y > 0 {
+		h = gtx.Constraints.Min.Y
+	}
 	rect(gtx, image.Rect(0, 0, w, h), gtx.Dp(8), v.th.Surface)
+	defer clip.Rect{Max: image.Pt(w, h)}.Push(gtx.Ops).Pop()
 	t := op.Offset(image.Pt(px, pt)).Push(gtx.Ops)
 	call.Add(gtx.Ops)
 	t.Pop()
@@ -225,6 +239,7 @@ func (v *View) procsCard(gtx layout.Context) layout.Dimensions {
 			defer op.Offset(image.Pt(-in, 0)).Push(gtx.Ops).Pop()
 			c := gtx
 			c.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X+2*in, gtx.Constraints.Max.Y))
+			v.procs.threads = v.threads()
 			v.procs.Layout(c, v.th, v.table, v.filter.Text(), v.groupColor)
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		}))

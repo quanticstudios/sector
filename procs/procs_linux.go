@@ -53,6 +53,7 @@ var launchers = map[string]bool{
 var wrappers = map[string]bool{
 	"bwrap": true, "xdg-dbus-proxy": true, "flatpak": true, "flatpak-session": true,
 	"uwsm": true, "start-hyprland": true, "systemd-run": true,
+	"gtk-launch": true, "gio": true, "xdg-open": true, "setsid": true, "nohup": true,
 }
 
 // shells, by exe or comm: one at an app's root only launches it.

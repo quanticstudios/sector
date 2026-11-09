@@ -68,7 +68,7 @@ func (s *sampler) readCPU(dt float64) (CPU, error) {
 
 	var diePkg []int
 	c.Cores, c.Dies, diePkg = readTopology()
-	readTemps(c.Dies, diePkg)
+	c.TempC = readTemps(c.Dies, diePkg)
 	c.MHz = readMHz()
 	c.PowerW = s.readPower(dt)
 	return c, err
@@ -144,8 +144,10 @@ func cmpPair(a, b [2]int) int { return cmp.Or(cmp.Compare(a[0], b[0]), cmp.Compa
 // readTemps fills each die's temperature from hwmon. AMD k10temp reports
 // Tccd1, Tccd2... which map to dies in order, one k10temp per package in
 // hwmon number order; dies without one get Tdie, else Tctl. Intel coretemp
-// reports "Package id N" for package N.
-func readTemps(dies []Die, diePkg []int) {
+// reports "Package id N" for package N. It returns the package temperature
+// that btop and the bar show: the first k10temp's Tctl, else its Tdie, else
+// Package id 0.
+func readTemps(dies []Die, diePkg []int) float64 {
 	type ccd struct {
 		dev, n int // hwmon position, Tccd number
 		c      float64
@@ -175,9 +177,9 @@ func readTemps(dies []Die, diePkg []int) {
 				n, _ := strconv.Atoi(label[4:])
 				ccds = append(ccds, ccd{i, n, c})
 			case label == "Tdie":
-				tdie = c
+				tdie = cmp.Or(tdie, c)
 			case label == "Tctl":
-				tctl = c
+				tctl = cmp.Or(tctl, c)
 			case strings.HasPrefix(label, "Package id "):
 				n, _ := strconv.Atoi(label[len("Package id "):])
 				pkg[n] = c
@@ -197,6 +199,7 @@ func readTemps(dies []Die, diePkg []int) {
 			dies[i].TempC = fallback
 		}
 	}
+	return cmp.Or(tctl, tdie, pkg[0])
 }
 
 // readMHz is the mean current clock over the CPUs that report one.

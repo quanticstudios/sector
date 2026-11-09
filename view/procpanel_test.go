@@ -81,8 +81,13 @@ func TestPPExpandedSurvivesNewTable(t *testing.T) {
 
 func TestPPFormat(t *testing.T) {
 	for _, c := range []struct{ got, want string }{
-		{ppFormatCores(3.24), "3.2"},
-		{ppFormatCores(0.01), "0.0"},
+		{ppFormatPct(3.24), "3.2"},
+		{ppFormatPct(0.01), "0.0"},
+		{ppFormatPct(9.94), "9.9"},
+		{ppFormatPct(9.96), "10"},
+		{ppFormatPct(47.4), "47"},
+		{ppFormatPct(cpuPct(8, 32)), "25"},
+		{ppFormatPct(cpuPct(0.5, 0)), "50"},
 		{ppFormatMem(512 << 20), "512 MiB"},
 		{ppFormatMem(1288490189), "1.2 GiB"},
 		{ppFormatMem(1023<<20 + 1<<19), "1.0 GiB"},
@@ -168,7 +173,7 @@ func TestPPOtherShowsFolded(t *testing.T) {
 
 func TestPPBarScale(t *testing.T) {
 	for _, c := range []struct{ busiest, want float64 }{
-		{0, 2}, {0.3, 2}, {2, 2}, {2.1, 5}, {8.4, 10}, {10, 10}, {10.1, 20}, {31, 50}, {math.NaN(), 2},
+		{0, 5}, {0.3, 5}, {5, 5}, {5.1, 10}, {8.4, 10}, {10.1, 20}, {26, 50}, {50.1, 100}, {100, 100}, {math.NaN(), 5},
 	} {
 		if got := ppBarScale(c.busiest); got != c.want {
 			t.Errorf("ppBarScale(%v) = %v, want %v", c.busiest, got, c.want)

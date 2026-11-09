@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"gioui.org/f32"
@@ -25,6 +26,7 @@ type line struct {
 	w     float32 // stroke in dp, 1.5 when 0
 	fill  bool
 	dashd bool
+	tag   string // a label at the line's right end, shown where it fits
 }
 
 // recent is the history the lower cards draw and the time at its right edge.
@@ -36,10 +38,11 @@ func (v *View) recent() ([]entry, time.Time) {
 	return since(v.hist, end.Add(-window)), end
 }
 
-// spark draws lines over the last minute, scaled so top is the upper rule,
-// with label beside that rule and 0 beside the lower one. It fills
-// gtx.Constraints.Min.Y, or 48 dp when that is 0.
-func (v *View) spark(top float64, label string, lines ...line) layout.Widget {
+// spark draws lines over the last minute, scaled so top is the upper rule.
+// The axis on the right labels top, 0 and a gridline every step, in the
+// unit div bytes called unit; a short graph labels every second gridline,
+// or none. It fills gtx.Constraints.Min.Y, or 48 dp when that is 0.
+func (v *View) spark(top, step, div float64, unit string, lines ...line) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions {
 		h, end := v.recent()
 		w := gtx.Constraints.Max.X
@@ -48,10 +51,6 @@ func (v *View) spark(top float64, label string, lines ...line) layout.Widget {
 			sh = gtx.Dp(48)
 		}
 		pw := w - gtx.Dp(60)
-		hline(gtx, 0, pw, 0, cSparkTop)
-		hline(gtx, 0, pw, sh-1, cSparkBot)
-		v.placeLabel(gtx, w, 0, 1, 0.5, v.th.TextQuiet, label)
-		v.placeLabel(gtx, w, sh, 1, 0.5, v.th.TextQuiet, "0")
 		if top <= 0 {
 			top = 1
 		}
@@ -59,29 +58,130 @@ func (v *View) spark(top float64, label string, lines ...line) layout.Widget {
 		y := func(val float64) float32 {
 			return float32(sh-1) - float32(math.Min(1, math.Max(0, val/top)))*float32(sh-3)
 		}
-		defer clip.Rect{Min: image.Pt(0, -sh), Max: image.Pt(pw, 2*sh)}.Push(gtx.Ops).Pop()
-		for _, l := range lines {
-			pts := make([]f32.Point, len(h))
-			base := make([]f32.Point, len(h))
-			for i, e := range h {
-				pts[i] = f32.Pt(x(e.t), y(l.val(e)))
-				base[i] = f32.Pt(pts[i].X, float32(sh))
-			}
-			sw := l.w
-			if sw == 0 {
-				sw = 1.5
-			}
-			if l.fill {
-				area(gtx, pts, base, theme.Alpha(l.c, 0.14))
-			}
-			if l.dashd {
-				dashed(gtx, pts, float32(gtx.Dp(1))*sw, float32(gtx.Dp(4)), float32(gtx.Dp(3)), l.c)
-			} else {
-				polyline(gtx, pts, float32(gtx.Dp(1))*sw, l.c)
-			}
+		quiet := v.th.TextQuiet
+		hline(gtx, 0, pw, 0, cSparkTop)
+		hline(gtx, 0, pw, sh-1, cSparkBot)
+		v.placeText(gtx, theme.Size11, w, 0, 1, 0.5, quiet, tickStr(top/div)+" "+unit, nil)
+		v.placeText(gtx, theme.Size11, w, sh, 1, 0.5, quiet, "0", nil)
+		ts := ticks(top, step)
+		room := gtx.Dp(22)
+		every := 1
+		for every <= len(ts) && float32(sh-3)*float32(step*float64(every)/top) < float32(room) {
+			every *= 2
 		}
+		for i, t := range ts {
+			yy := int(y(t))
+			if (i+1)%every != 0 || yy < room {
+				continue
+			}
+			hline(gtx, 0, pw, yy, cGridLine)
+			v.placeText(gtx, theme.Size11, w, yy, 1, 0.5, quiet, tickStr(t/div), nil)
+		}
+		func() {
+			defer clip.Rect{Min: image.Pt(0, -sh), Max: image.Pt(pw, 2*sh)}.Push(gtx.Ops).Pop()
+			v.sparkLines(gtx, h, x, y, sh, lines)
+		}()
+		v.sparkTags(gtx, h, x, y, sh, lines)
 		return layout.Dimensions{Size: image.Pt(w, sh)}
 	}
+}
+
+// sparkLines strokes and fills the lines of a sparkline sh px tall.
+func (v *View) sparkLines(gtx layout.Context, h []entry, x func(time.Time) float32, y func(float64) float32, sh int, lines []line) {
+	for _, l := range lines {
+		pts := make([]f32.Point, len(h))
+		base := make([]f32.Point, len(h))
+		for i, e := range h {
+			pts[i] = f32.Pt(x(e.t), y(l.val(e)))
+			base[i] = f32.Pt(pts[i].X, float32(sh))
+		}
+		sw := l.w
+		if sw == 0 {
+			sw = 1.5
+		}
+		if l.fill {
+			area(gtx, pts, base, theme.Alpha(l.c, 0.14))
+		}
+		if l.dashd {
+			dashed(gtx, pts, float32(gtx.Dp(1))*sw, float32(gtx.Dp(4)), float32(gtx.Dp(3)), l.c)
+		} else {
+			polyline(gtx, pts, float32(gtx.Dp(1))*sw, l.c)
+		}
+	}
+}
+
+// sparkTags writes each line's tag inside the plot at its right end, above
+// the line or else below it, and leaves out a tag that fits neither way
+// without leaving the plot, covering another tag or crossing another line's
+// end.
+func (v *View) sparkTags(gtx layout.Context, h []entry, x func(time.Time) float32, y func(float64) float32, sh int, lines []line) {
+	if len(h) == 0 {
+		return
+	}
+	var taken []image.Rectangle
+	gap := gtx.Dp(2)
+	e := h[len(h)-1]
+	for i, l := range lines {
+		if l.tag == "" {
+			continue
+		}
+		px, py := int(x(e.t))-gtx.Dp(4), int(y(l.val(e)))
+		for _, at := range []struct {
+			y  int
+			ay float32
+		}{{py - gap, 1}, {py + gap, 0}} {
+			r, ok := v.placeText(gtx, theme.Size11, px, at.y, 1, at.ay, v.th.TextQuiet, l.tag, func(r image.Rectangle) bool {
+				if r.Min.Y < 0 || r.Max.Y > sh || r.Min.X < 0 {
+					return false
+				}
+				for _, t := range taken {
+					if r.Overlaps(t) {
+						return false
+					}
+				}
+				for j, o := range lines {
+					if oy := int(y(o.val(e))); j != i && oy >= r.Min.Y && oy <= r.Max.Y {
+						return false
+					}
+				}
+				return true
+			})
+			if ok {
+				taken = append(taken, r)
+				break
+			}
+		}
+	}
+}
+
+// ticks are the gridline values under top, step apart, leaving out one
+// within half a step of top.
+func ticks(top, step float64) []float64 {
+	var out []float64
+	for k := 1.0; step > 0 && k*step < top-step/2+1e-9*top; k++ {
+		out = append(out, k*step)
+	}
+	return out
+}
+
+// niceStep rounds v to a half step of its leading digit: 15.1 to 15, 7.8
+// to 8, 0.48 to 0.5.
+func niceStep(v float64) float64 {
+	if v <= 0 {
+		return 0
+	}
+	mag := math.Pow(10, math.Floor(math.Log10(v)))
+	return math.Round(v/mag*2) / 2 * mag
+}
+
+// tickStr is an axis value with about three significant digits and no
+// trailing zeros: 60.5, 32, 0.25.
+func tickStr(v float64) string {
+	s := num3(v)
+	if strings.Contains(s, ".") {
+		s = strings.TrimRight(strings.TrimRight(s, "0"), ".")
+	}
+	return s
 }
 
 // kv is a row with label spans at the left and value spans at the right.
@@ -97,13 +197,18 @@ func thin(share float64, c color.NRGBA) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions { return bar(gtx, gtx.Dp(4), share, c) }
 }
 
-// rule is a one pixel line with room above and below it.
-func (v *View) rule(above, below int) layout.Widget {
-	return func(gtx layout.Context) layout.Dimensions {
-		hline(gtx, 0, gtx.Constraints.Max.X, above, v.th.BorderSubtle)
-		return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, above+1+below)}
+// rule is a one pixel line between gaps of above and below px, which
+// halve when the card is short.
+func (v *View) rule(above, below int) []part {
+	line := func(gtx layout.Context) layout.Dimensions {
+		hline(gtx, 0, gtx.Constraints.Max.X, 0, v.th.BorderSubtle)
+		return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 1)}
 	}
+	return []part{gap(above).to(above / 2), rigid(line), gap(below).to(below / 2)}
 }
+
+// sparkFloor is how short a sparkline gets in a squeezed card.
+const sparkFloor = 24
 
 func share(a, b uint64) float64 {
 	if b == 0 {
@@ -133,9 +238,9 @@ func (v *View) memCard(gtx layout.Context) layout.Dimensions {
 	div, unit := unitOf(float64(m.Total))
 	head := v.head("Memory", "last 60 s",
 		span{s: inUnit(float64(m.Used), div), c: cSoft}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(m.Total), div) + " " + unit, c: cSoft})
-	graph := v.spark(float64(m.Total), bytesStr(float64(m.Total)),
-		line{val: func(e entry) float64 { return e.used + e.cached }, c: th.MemCache, w: 1, fill: true},
-		line{val: func(e entry) float64 { return e.used }, c: th.MemUsed, fill: true})
+	graph := v.spark(float64(m.Total), niceStep(float64(m.Total)/div/4)*div, div, unit,
+		line{val: func(e entry) float64 { return e.used + e.cached }, c: th.MemCache, w: 1, fill: true, tag: "cached " + inUnit(float64(m.Cached), div)},
+		line{val: func(e entry) float64 { return e.used }, c: th.MemUsed, fill: true, tag: "used " + inUnit(float64(m.Used), div)})
 	memrow := func(gtx layout.Context) layout.Dimensions {
 		w, h, g := gtx.Constraints.Max.X, gtx.Dp(8), gtx.Dp(2)
 		defer clip.UniformRRect(image.Rect(0, 0, w, h), gtx.Dp(3)).Push(gtx.Ops).Pop()
@@ -157,9 +262,10 @@ func (v *View) memCard(gtx layout.Context) layout.Dimensions {
 	swap := v.kv([]span{{s: "Swap", c: th.Muted}},
 		span{s: inUnit(float64(m.SwapUsed), sdiv), c: th.Fg}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(m.SwapTotal), sdiv) + " " + sunit, c: th.Fg})
 	return v.card(gtx, func(gtx layout.Context) layout.Dimensions {
-		parts := []part{rigid(head), gap(gtx.Dp(8)), flexed(gtx.Dp(48), graph), gap(gtx.Dp(10)), rigid(memrow), gap(gtx.Dp(9)), rigid(v.grid2(cells))}
+		parts := []part{rigid(head), gap(gtx.Dp(8)), flexed(gtx.Dp(48), graph).to(gtx.Dp(sparkFloor)), gap(gtx.Dp(10)), rigid(memrow), gap(gtx.Dp(9)), rigid(v.grid2(cells))}
 		if m.SwapTotal > 0 {
-			parts = append(parts, rigid(v.rule(gtx.Dp(9), gtx.Dp(8))), rigid(swap), gap(gtx.Dp(5)), rigid(thin(share(m.SwapUsed, m.SwapTotal), th.MemUsed)))
+			parts = append(parts, v.rule(gtx.Dp(9), gtx.Dp(8))...)
+			parts = append(parts, rigid(swap), gap(gtx.Dp(5)), rigid(thin(share(m.SwapUsed, m.SwapTotal), th.MemUsed)))
 		}
 		return column(gtx, parts...)
 	})
@@ -222,9 +328,9 @@ func (v *View) diskCard(gtx layout.Context) layout.Dimensions {
 		parts := []part{rigid(head)}
 		for i, d := range drives {
 			if i > 0 {
-				parts = append(parts, rigid(v.rule(gtx.Dp(10), gtx.Dp(10))))
+				parts = append(parts, v.rule(gtx.Dp(10), gtx.Dp(10))...)
 			} else {
-				parts = append(parts, gap(gtx.Dp(10)))
+				parts = append(parts, gap(gtx.Dp(10)).to(gtx.Dp(5)))
 			}
 			parts = append(parts, v.drive(gtx, d)...)
 		}
@@ -243,7 +349,9 @@ func diskTop(h []entry, name string) float64 {
 	return ceilPow2(peak/1e6*1.1, 4)
 }
 
-// drive is one drive's block in the disk card.
+// drive is one drive's block in the disk card. A short card leaves out the
+// used and free line first, the bar still shows how full the drive is,
+// then the drive's read and write line, which the card's header sums.
 func (v *View) drive(gtx layout.Context, d sample.Drive) []part {
 	th := v.th
 	h, _ := v.recent()
@@ -262,7 +370,7 @@ func (v *View) drive(gtx layout.Context, d sample.Drive) []part {
 			return v.rich(gtx, theme.Size12, span{s: d.Name, c: th.Fg, w: font.SemiBold}, span{s: mounts, c: th.Muted})
 		}, busy)
 	}
-	graph := v.spark(top*1e6, strconv.FormatFloat(top, 'f', -1, 64)+" MB/s",
+	graph := v.spark(top*1e6, top*1e6/4, 1e6, "MB/s",
 		line{val: func(e entry) float64 { return e.drives[d.Name][1] }, c: th.Blue, fill: true},
 		line{val: func(e entry) float64 { return e.drives[d.Name][0] }, c: cIOOut, dashd: true})
 	div, unit := unitOf(float64(d.Size))
@@ -271,9 +379,9 @@ func (v *View) drive(gtx layout.Context, d sample.Drive) []part {
 		{s: inUnit(float64(d.Free), div) + " " + unit, c: th.Fg}, {s: "free", c: th.TextQuiet},
 	}, span{s: pct(share(d.Used, d.Size)), c: th.Fg}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(d.Size), div) + " " + unit, c: th.Fg})
 	return []part{
-		rigid(head), gap(gtx.Dp(7)), flexed(gtx.Dp(36), graph), gap(gtx.Dp(7)),
-		rigid(v.kv(v.ioPair(mbStr(d.ReadBps), mbStr(d.WriteBps), true))), gap(gtx.Dp(5)),
-		rigid(size), gap(gtx.Dp(5)), rigid(thin(share(d.Used, d.Size), cBarGray)),
+		rigid(head), gap(gtx.Dp(7)), flexed(gtx.Dp(36), graph).to(gtx.Dp(sparkFloor)), gap(gtx.Dp(7)),
+		rigid(v.kv(v.ioPair(mbStr(d.ReadBps), mbStr(d.WriteBps), true))).opt(1), gap(gtx.Dp(5)).opt(1),
+		rigid(size).opt(2), gap(gtx.Dp(5)).opt(2), rigid(thin(share(d.Used, d.Size), cBarGray)),
 	}
 }
 
@@ -297,7 +405,8 @@ func (v *View) netCard(gtx layout.Context) layout.Dimensions {
 		top = max(top, rt[0], rt[1])
 	}
 	top = ceilPow2(top*1.1, 1<<20)
-	graph := v.spark(top, ceilStr(top),
+	ndiv, nunit := unitOf(top)
+	graph := v.spark(top, top/4, ndiv, nunit+"/s",
 		line{val: func(e entry) float64 { return e.nets[n.Name][0] }, c: th.Blue, fill: true},
 		line{val: func(e entry) float64 { return e.nets[n.Name][1] }, c: cIOOut, dashd: true})
 	row := func(name string, dash bool, c color.NRGBA, rate, peak float64, total uint64) layout.Widget {
@@ -311,7 +420,7 @@ func (v *View) netCard(gtx layout.Context) layout.Dimensions {
 		}
 	}
 	return v.card(gtx, func(gtx layout.Context) layout.Dimensions {
-		return column(gtx, rigid(v.head("Network", n.Name, span{s: n.Addr, c: cSoft})), gap(gtx.Dp(8)), rigid(graph), gap(gtx.Dp(8)),
+		return column(gtx, rigid(v.head("Network", n.Name, span{s: n.Addr, c: cSoft})), gap(gtx.Dp(8)), flexed(gtx.Dp(48), graph).to(gtx.Dp(sparkFloor)), gap(gtx.Dp(8)),
 			rigid(row("Down", false, th.Blue, n.RxBps, peakRx, n.RxTotal)), gap(gtx.Dp(6)),
 			rigid(row("Up", true, cIOOut, n.TxBps, peakTx, n.TxTotal)))
 	})

@@ -15,6 +15,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/unit"
 
 	"github.com/quanticstudios/sector/theme"
 )
@@ -28,7 +29,7 @@ type hover struct {
 }
 
 // band is one series of the CPU graph as drawn: its color, legend name and
-// cores per entry.
+// cores per entry. The card shows cores as a percent of the machine.
 type band struct {
 	c    color.NRGBA
 	name string
@@ -101,7 +102,7 @@ func (v *View) cpuCard(gtx layout.Context) layout.Dimensions {
 	threads := v.threads()
 
 	head := v.head("CPU by group", "last 60 s",
-		span{s: strconv.FormatFloat(total, 'f', 1, 64), c: cSoft}, span{s: "of", c: th.TextQuiet}, span{s: strconv.Itoa(threads) + " threads", c: cSoft})
+		span{s: ppFormatPct(cpuPct(total, threads)) + "%", c: cSoft}, span{s: "of", c: th.TextQuiet}, span{s: strconv.Itoa(threads) + " threads", c: cSoft})
 	legend := func(gtx layout.Context) layout.Dimensions {
 		items := make([]layout.Widget, len(bands))
 		for i, b := range bands {
@@ -110,7 +111,7 @@ func (v *View) cpuCard(gtx layout.Context) layout.Dimensions {
 				now = b.vals[len(b.vals)-1]
 			}
 			items[i] = func(gtx layout.Context) layout.Dimensions {
-				return v.rich(gtx, theme.Size12, span{mark: swatch(b.c)}, span{s: b.name, c: th.Muted}, span{s: strconv.FormatFloat(now, 'f', 1, 64), c: cDim})
+				return v.rich(gtx, theme.Size12, span{mark: swatch(b.c)}, span{s: b.name, c: th.Muted}, span{s: ppFormatPct(cpuPct(now, threads)) + "%", c: cDim})
 			}
 		}
 		return flow(gtx, gtx.Dp(14), gtx.Dp(4), items)
@@ -119,25 +120,33 @@ func (v *View) cpuCard(gtx layout.Context) layout.Dimensions {
 		return column(gtx, rigid(head), gap(gtx.Dp(6)), rigid(legend), gap(gtx.Dp(8)),
 			flexed(gtx.Dp(150), func(gtx layout.Context) layout.Dimensions {
 				return v.cpuGraph(gtx, h, end, bands, float64(threads))
-			}))
+			}).to(gtx.Dp(56)))
 	})
 }
 
-// cpuGraph draws the stacked bands in the constraints' exact size, axis
-// labels in a 24 dp gutter on the right and time labels underneath.
+// cpuGraph draws the stacked bands in the constraints' exact size, scaled
+// so top cores is 100%, percent labels in a 36 dp gutter on the right and
+// time labels underneath.
 func (v *View) cpuGraph(gtx layout.Context, h []entry, end time.Time, bands []band, top float64) layout.Dimensions {
 	th := v.th
 	size := gtx.Constraints.Min
-	pw := size.X - gtx.Dp(24)
+	pw := size.X - gtx.Dp(36)
 	y0, y1 := float32(size.Y-gtx.Dp(16)), float32(gtx.Dp(4))
 	y := func(c float64) float32 { return y0 - float32(c/top)*(y0-y1) }
 	x := func(t time.Time) float32 { return float32(pw) * (1 - float32(end.Sub(t))/float32(window)) }
 
+	// A short graph labels every second grid line, or only the top one.
+	every := 1
+	for every < 4 && (y0-y1)*float32(every)/4 < float32(gtx.Dp(18)) {
+		every *= 2
+	}
 	for k := 1; k <= 4; k++ {
 		c := top * float64(k) / 4
 		yy := int(y(c))
 		hline(gtx, 0, pw, yy, cGridLine)
-		v.placeLabel(gtx, size.X, yy, 1, 0.5, th.TextQuiet, strconv.FormatFloat(math.Round(c), 'f', -1, 64))
+		if k%every == 0 {
+			v.placeLabel(gtx, size.X, yy, 1, 0.5, th.TextQuiet, strconv.Itoa(25*k)+"%")
+		}
 	}
 
 	st := stack(seriesOf(bands))
@@ -184,7 +193,7 @@ func (v *View) cpuGraph(gtx layout.Context, h []entry, end time.Time, bands []ba
 		}
 		cx := int(x(h[i].t))
 		rect(gtx, image.Rect(cx, 0, cx+1, int(y0)), 0, cDim)
-		v.tooltip(gtx, h[i], end, i, bands, cx, pw)
+		v.tooltip(gtx, h[i], end, i, bands, int(top), cx, pw)
 	}
 	return layout.Dimensions{Size: size}
 }
@@ -200,18 +209,31 @@ func seriesOf(bands []band) [][]float64 {
 // placeLabel draws s with its anchor point (ax, ay, as fractions of its
 // size) at x, y.
 func (v *View) placeLabel(gtx layout.Context, x, y int, ax, ay float32, c color.NRGBA, s string) {
+	v.placeText(gtx, theme.Size12, x, y, ax, ay, c, s, nil)
+}
+
+// placeText is placeLabel at size, and returns where the text went. When
+// ok is set it draws only if ok accepts that rectangle.
+func (v *View) placeText(gtx layout.Context, size unit.Sp, x, y int, ax, ay float32, c color.NRGBA, s string, ok func(image.Rectangle) bool) (image.Rectangle, bool) {
 	c2 := gtx
 	c2.Constraints = layout.Constraints{Max: image.Pt(big, big)}
 	m := op.Record(gtx.Ops)
-	d := v.th.Label(c2, theme.Size12, font.Normal, c, s)
+	d := v.th.Label(c2, size, font.Normal, c, s)
 	call := m.Stop()
-	t := op.Offset(image.Pt(x-int(ax*float32(d.Size.X)), y-int(ay*float32(d.Size.Y)))).Push(gtx.Ops)
+	at := image.Pt(x-int(ax*float32(d.Size.X)), y-int(ay*float32(d.Size.Y)))
+	r := image.Rectangle{Min: at, Max: at.Add(d.Size)}
+	if ok != nil && !ok(r) {
+		return r, false
+	}
+	t := op.Offset(at).Push(gtx.Ops)
 	call.Add(gtx.Ops)
 	t.Pop()
+	return r, true
 }
 
-// tooltip lists the groups at entry e, busiest first, beside the crosshair.
-func (v *View) tooltip(gtx layout.Context, e entry, end time.Time, i int, bands []band, cx, pw int) {
+// tooltip lists the groups at entry e, busiest first, beside the crosshair,
+// in percent of threads logical CPUs.
+func (v *View) tooltip(gtx layout.Context, e entry, end time.Time, i int, bands []band, threads, cx, pw int) {
 	th := v.th
 	ago := "now"
 	if s := int(end.Sub(e.t).Round(time.Second) / time.Second); s > 0 {
@@ -246,7 +268,7 @@ func (v *View) tooltip(gtx layout.Context, e entry, end time.Time, i int, bands 
 	}
 	headCall, headD := rec(func(gtx layout.Context) layout.Dimensions {
 		return v.rich(gtx, theme.Size12, span{s: ago, c: th.Fg, w: font.SemiBold}, span{s: "·", c: th.Muted},
-			span{s: strconv.FormatFloat(sum, 'f', 1, 64), c: th.Fg}, span{s: "cores", c: th.Muted})
+			span{s: ppFormatPct(cpuPct(sum, threads)) + "%", c: th.Fg})
 	})
 	lines := make([]line, len(order))
 	wName, wNum := 0, 0
@@ -255,7 +277,7 @@ func (v *View) tooltip(gtx layout.Context, e entry, end time.Time, i int, bands 
 		lines[j].name, lines[j].nameD = rec(func(gtx layout.Context) layout.Dimensions {
 			return v.rich(gtx, theme.Size12, span{mark: swatch(b.c)}, span{s: b.name, c: th.Muted})
 		})
-		lines[j].num, lines[j].numD = rec(v.text(theme.Size12, font.Normal, th.Fg, strconv.FormatFloat(b.vals[i], 'f', 1, 64)))
+		lines[j].num, lines[j].numD = rec(v.text(theme.Size12, font.Normal, th.Fg, ppFormatPct(cpuPct(b.vals[i], threads))+"%"))
 		wName, wNum = max(wName, lines[j].nameD.Size.X), max(wNum, lines[j].numD.Size.X)
 	}
 	px, py, lh := gtx.Dp(10), gtx.Dp(8), gtx.Dp(18)
@@ -265,7 +287,8 @@ func (v *View) tooltip(gtx layout.Context, e entry, end time.Time, i int, bands 
 	if left+box.X > pw {
 		left = cx - box.X - gtx.Dp(14)
 	}
-	defer op.Offset(image.Pt(left, 0)).Push(gtx.Ops).Pop()
+	// A short graph lifts the box over the legend rather than past the card.
+	defer op.Offset(image.Pt(left, min(0, gtx.Constraints.Min.Y-box.Y))).Push(gtx.Ops).Pop()
 	r := image.Rectangle{Max: box}
 	for _, s := range []struct {
 		grow, drop int
