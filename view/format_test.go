@@ -39,3 +39,11 @@ func TestCeilPow2(t *testing.T) {
 		}
 	}
 }
+
+func TestWaitStr(t *testing.T) {
+	for sec, want := range map[float64]string{0.0004: "0.4 ms", 0.0061: "6.1 ms", 0.016: "16 ms", 0.25: "250 ms", 1.24: "1.2 s"} {
+		if got := waitStr(sec); got != want {
+			t.Errorf("waitStr(%v) = %q, want %q", sec, got, want)
+		}
+	}
+}

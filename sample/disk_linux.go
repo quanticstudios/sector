@@ -197,10 +197,15 @@ var statfs = func(path string) (size, used, free uint64, err error) {
 	return st.Blocks * bs, (st.Blocks - st.Bfree) * bs, st.Bavail * bs, nil
 }
 
-type ioCounters struct{ read, written, ticks uint64 } // sectors, sectors, ms
+// ioCounters are one device's /proc/diskstats counters.
+type ioCounters struct {
+	read, written uint64 // sectors
+	ticks         uint64 // ms with I/O in flight
+	ios, ms       uint64 // requests finished and the ms they took, discards and flushes included
+	weighted      uint64 // ms spent by all requests in flight, summed
+}
 
-// parseDiskstats reads sectors read and written and the ms with I/O in
-// flight per device from /proc/diskstats.
+// parseDiskstats reads each device's counters from /proc/diskstats.
 func parseDiskstats(s string) map[string]ioCounters {
 	out := map[string]ioCounters{}
 	for line := range strings.Lines(s) {
@@ -208,11 +213,18 @@ func parseDiskstats(s string) map[string]ioCounters {
 		if len(f) < 13 {
 			continue
 		}
-		var c ioCounters
-		c.read, _ = strconv.ParseUint(f[5], 10, 64)
-		c.written, _ = strconv.ParseUint(f[9], 10, 64)
-		c.ticks, _ = strconv.ParseUint(f[12], 10, 64)
-		out[f[2]] = c
+		num := func(i int) uint64 {
+			if i >= len(f) {
+				return 0 // discards and flushes, missing on older kernels
+			}
+			n, _ := strconv.ParseUint(f[i], 10, 64)
+			return n
+		}
+		out[f[2]] = ioCounters{
+			read: num(5), written: num(9), ticks: num(12), weighted: num(13),
+			ios: num(3) + num(7) + num(14) + num(18),
+			ms:  num(6) + num(10) + num(17) + num(19),
+		}
 	}
 	return out
 }
@@ -233,6 +245,8 @@ func (s *sampler) readDrives(dt float64) ([]Drive, error) {
 			Name:   name,
 			Model:  readStr(filepath.Join(sysRoot, "block", name, "device/model")),
 			Mounts: points[name],
+
+			Rotational: readStr(filepath.Join(sysRoot, "block", name, "queue/rotational")) == "1",
 		}
 		for _, f := range fs[name] {
 			if size, used, free, err := statfs(f.point); err == nil {
@@ -245,6 +259,12 @@ func (s *sampler) readDrives(dt float64) ([]Drive, error) {
 			d.ReadBps = rate(p.read, c.read, dt) * 512
 			d.WriteBps = rate(p.written, c.written, dt) * 512
 			d.Busy = min(rate(p.ticks, c.ticks, dt)/1000, 1)
+			d.Queue = rate(p.weighted, c.weighted, dt) / 1000
+			if c.ios > p.ios && c.ms >= p.ms {
+				d.Wait = float64(c.ms-p.ms) / float64(c.ios-p.ios) / 1000
+			} else if d.Busy >= 0.99 {
+				d.Wait = dt // stuck: nothing finished
+			}
 		}
 		drives = append(drives, d)
 	}

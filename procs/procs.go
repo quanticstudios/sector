@@ -13,6 +13,7 @@ type Proc struct {
 	Cores     float64 // threads' worth of CPU since the previous Scan: 1.5 is one and a half threads busy
 	RSS       uint64  // resident bytes
 	Threads   int
+	DiskBps   float64 // bytes read from and written to storage per second since the previous Scan; 0 for another user's process
 }
 
 // Kind is what a group is built around.
@@ -36,6 +37,7 @@ type Group struct {
 	Branch  string // the worktree branch, "" outside a linked worktree
 	Cores   float64
 	RSS     uint64
+	DiskBps float64
 	Threads int    // threads in the group
 	Procs   []Proc // members, busiest first
 	Folded  int    // for Other: how many App and System groups folded into it

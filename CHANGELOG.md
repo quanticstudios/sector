@@ -16,6 +16,19 @@ request merges, `git pull --ff-only` and run `sh scripts/release.sh --tag`.
 It tags the release commit on `main` and pushes the tag once, which starts
 the release build. Either step takes `--dry-run`.
 
+## Unreleased
+
+- Each drive says how long it keeps programs waiting instead of "busy
+  100%", which an NVMe drive reads under any load: "waits 0.4 ms", or
+  "slow" or "jammed" with the wait and how many requests are queued. The
+  graph tints the stretch where the drive was slow (yellow) or jammed
+  (red), and while a drive is slow the Disks card names the process
+  moving the most bytes.
+- Processes report their disk reads and writes per second (`DiskBps`),
+  and drives their average wait and queue depth (`Wait`, `Queue`).
+- A graph leaves a gap where no samples came, such as while pitwall's
+  Monitor tab was hidden, instead of drawing a straight line across it.
+
 ## v0.1.5
 
 - The graphs show the last 2 minutes instead of the last 60 seconds.

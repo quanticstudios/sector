@@ -9,8 +9,8 @@ import (
 
 func TestDiskTop(t *testing.T) {
 	h := []entry{
-		{drives: map[string][2]float64{"nvme0n1": {2e6, 21e6}, "nvme1n1": {1e6, 1e6}}},
-		{drives: map[string][2]float64{"nvme0n1": {30e6, 5e6}}},
+		{drives: map[string]diskRate{"nvme0n1": {r: 2e6, w: 21e6}, "nvme1n1": {r: 1e6, w: 1e6}}},
+		{drives: map[string]diskRate{"nvme0n1": {r: 30e6, w: 5e6}}},
 	}
 	// 30 MB/s read with 10% headroom is 33, so the ceiling is 64.
 	if got := diskTop(h, "nvme0n1"); got != 64 {
@@ -74,5 +74,23 @@ func TestTicks(t *testing.T) {
 	}
 	if s := tickStr(60.47) + " " + tickStr(2.5); s != "60.5 2.5" {
 		t.Errorf("tickStr: %q", s)
+	}
+}
+
+func TestJamOf(t *testing.T) {
+	for _, c := range []struct {
+		d    sample.Drive
+		want jam
+	}{
+		{sample.Drive{Wait: 0.0004, Queue: 3}, jamOK},
+		{sample.Drive{Wait: 0.008, Queue: 0.2}, jamOK}, // one slow flush on an idle drive
+		{sample.Drive{Wait: 0.005, Queue: 4}, jamSlow},
+		{sample.Drive{Wait: 0.016, Queue: 390}, jamJammed},
+		{sample.Drive{Wait: 0.016, Queue: 2, Rotational: true}, jamOK}, // a disk seeking
+		{sample.Drive{Wait: 0.2, Queue: 8, Rotational: true}, jamJammed},
+	} {
+		if got := jamOf(c.d); got != c.want {
+			t.Errorf("%+v: %v, want %v", c.d, got, c.want)
+		}
 	}
 }

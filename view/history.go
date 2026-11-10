@@ -34,8 +34,36 @@ type entry struct {
 	cores        map[string]float64 // by group key
 	total        float64            // cores in use, all groups
 	used, cached float64            // memory bytes
-	drives       map[string][2]float64
+	drives       map[string]diskRate
 	nets         map[string][2]float64
+}
+
+// diskRate is one drive in one entry: bytes read and written per second
+// and how jammed it was.
+type diskRate struct {
+	r, w float64
+	jam  jam
+}
+
+// gapAfter is the longest step between two entries a graph draws a line
+// across. A longer one means no samples came, as while the host stopped
+// sampling a hidden tab, and the graph leaves it empty. It is above any
+// interval the title bar offers, so changing the interval never breaks a
+// line.
+const gapAfter = 12 * time.Second
+
+// runs splits h into stretches with no gap longer than gapAfter, as index
+// ranges [from, to).
+func runs(h []entry) [][2]int {
+	var out [][2]int
+	from := 0
+	for i := 1; i <= len(h); i++ {
+		if i == len(h) || h[i].t.Sub(h[i-1].t) > gapAfter {
+			out = append(out, [2]int{from, i})
+			from = i
+		}
+	}
+	return out
 }
 
 // keep appends e to h and drops the oldest past History.

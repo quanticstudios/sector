@@ -14,6 +14,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 
+	"github.com/quanticstudios/sector/procs"
 	"github.com/quanticstudios/sector/sample"
 	"github.com/quanticstudios/sector/theme"
 )
@@ -41,8 +42,10 @@ func (v *View) recent() ([]entry, time.Time) {
 // spark draws lines over the window, scaled so top is the upper rule.
 // The axis on the right labels top, 0 and a gridline every step, in the
 // unit div bytes called unit; a short graph labels every second gridline,
-// or none. It fills gtx.Constraints.Min.Y, or 48 dp when that is 0.
-func (v *View) spark(top, step, div float64, unit string, lines ...line) layout.Widget {
+// or none. shade, when set, tints the plot behind the lines from each
+// entry back to the one before it. It fills gtx.Constraints.Min.Y, or
+// 48 dp when that is 0.
+func (v *View) spark(top, step, div float64, unit string, shade func(entry) color.NRGBA, lines ...line) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions {
 		h, end := v.recent()
 		w := gtx.Constraints.Max.X
@@ -92,6 +95,16 @@ func (v *View) spark(top, step, div float64, unit string, lines ...line) layout.
 		}
 		pw := w - gw - gtx.Dp(8)
 		x := func(t time.Time) float32 { return float32(pw) * (1 - float32(end.Sub(t))/float32(window)) }
+		if shade != nil {
+			px := func(t time.Time) int { return int(math.Round(float64(x(t)))) }
+			for _, r := range runs(h) {
+				for j := r[0] + 1; j < r[1]; j++ {
+					if c := shade(h[j]); c.A > 0 {
+						rect(gtx, image.Rect(max(0, px(h[j-1].t)), 0, min(pw, px(h[j].t)), sh), 0, c)
+					}
+				}
+			}
+		}
 		hline(gtx, 0, pw, 0, cSparkTop)
 		hline(gtx, 0, pw, sh-1, cSparkBot)
 		tr, _ := v.placeText(gtx, theme.Size11, w, 0, 1, 0.5, quiet, topStr, nil)
@@ -121,6 +134,13 @@ func (v *View) spark(top, step, div float64, unit string, lines ...line) layout.
 
 // sparkLines strokes and fills the lines of a sparkline sh px tall.
 func (v *View) sparkLines(gtx layout.Context, h []entry, x func(time.Time) float32, y func(float64) float32, sh int, lines []line) {
+	for _, r := range runs(h) {
+		v.sparkRun(gtx, h[r[0]:r[1]], x, y, sh, lines)
+	}
+}
+
+// sparkRun draws the lines over h, which has no gap.
+func (v *View) sparkRun(gtx layout.Context, h []entry, x func(time.Time) float32, y func(float64) float32, sh int, lines []line) {
 	for _, l := range lines {
 		pts := make([]f32.Point, len(h))
 		base := make([]f32.Point, len(h))
@@ -271,7 +291,7 @@ func (v *View) memCard(gtx layout.Context) layout.Dimensions {
 	div, unit := unitOf(float64(m.Total))
 	head := v.head("Memory", "last "+windowStr,
 		span{s: inUnit(float64(m.Used), div), c: cSoft, tab: true}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(m.Total), div) + " " + unit, c: cSoft})
-	graph := v.spark(float64(m.Total), niceStep(float64(m.Total)/div/4)*div, div, unit,
+	graph := v.spark(float64(m.Total), niceStep(float64(m.Total)/div/4)*div, div, unit, nil,
 		line{val: func(e entry) float64 { return e.used + e.cached }, c: th.MemCache, w: 1, fill: true, tag: "cached " + inUnit(float64(m.Cached), div)},
 		line{val: func(e entry) float64 { return e.used }, c: th.MemUsed, fill: true, tag: "used " + inUnit(float64(m.Used), div)})
 	memrow := func(gtx layout.Context) layout.Dimensions {
@@ -344,13 +364,80 @@ func (v *View) ioPair(r, w string, strong bool) []span {
 	}
 }
 
-// diskCard is one block per drive: its mounts, busy share, a read and
-// write sparkline on its own scale, and how full it is.
+// jam is how long a drive keeps the programs using it waiting.
+type jam uint8
+
+const (
+	jamOK     jam = iota
+	jamSlow       // programs that touch the drive notice
+	jamJammed     // they stall
+)
+
+// jamOf grades a drive by how long its average request took, counting
+// only a drive with a request or more in flight on average, so one slow
+// flush on an idle drive does not count. A flash drive that keeps up
+// answers in well under a millisecond; a spinning disk needs tens of
+// milliseconds to seek, so it gets more room.
+func jamOf(d sample.Drive) jam {
+	slow, jammed := 0.003, 0.010
+	if d.Rotational {
+		slow, jammed = 0.040, 0.150
+	}
+	switch {
+	case d.Queue < 1 || d.Wait < slow:
+		return jamOK
+	case d.Wait < jammed:
+		return jamSlow
+	}
+	return jamJammed
+}
+
+// jamWord and jamColor name and color a jam in the drive's head, and
+// jamShade tints the stretch of its graph where it lasted.
+func (v *View) jamWord(j jam) (string, color.NRGBA) {
+	if j == jamJammed {
+		return "jammed", v.th.Red
+	}
+	return "slow", v.th.Yellow
+}
+
+func (v *View) jamShade(j jam) color.NRGBA {
+	switch j {
+	case jamJammed:
+		return theme.Alpha(v.th.Red, 0.16)
+	case jamSlow:
+		return theme.Alpha(v.th.Yellow, 0.10)
+	}
+	return color.NRGBA{}
+}
+
+// topDisk is the process moving the most bytes to and from storage and
+// its group.
+func topDisk(t procs.Table) (procs.Proc, procs.Group, bool) {
+	var bp procs.Proc
+	var bg procs.Group
+	for _, g := range t.Groups {
+		for _, p := range g.Procs {
+			if p.DiskBps > bp.DiskBps {
+				bp, bg = p, g
+			}
+		}
+	}
+	return bp, bg, bp.DiskBps > 0
+}
+
+// diskCard is one block per drive: its mounts, how long it keeps programs
+// waiting, a read and write sparkline on its own scale tinted where the
+// drive was slow or jammed, and how full it is. While a drive is slow it
+// names the process moving the most bytes.
 func (v *View) diskCard(gtx layout.Context) layout.Dimensions {
+	th := v.th
 	drives := v.last.Drives
 	var rd, wr float64
+	worst := jamOK
 	for _, d := range drives {
 		rd, wr = rd+d.ReadBps, wr+d.WriteBps
+		worst = max(worst, jamOf(d))
 	}
 	sub := strconv.Itoa(len(drives)) + " drives, last " + windowStr
 	if len(drives) == 1 {
@@ -359,6 +446,17 @@ func (v *View) diskCard(gtx layout.Context) layout.Dimensions {
 	head := v.head("Disks", sub, v.ioPair(mbStr(rd), mbStr(wr), false)...)
 	return v.card(gtx, func(gtx layout.Context) layout.Dimensions {
 		parts := []part{rigid(head)}
+		if p, g, ok := topDisk(v.table); ok && worst > jamOK {
+			// The rate before the names, so a long group name is what gets cut.
+			who := []span{{s: "most disk I/O", c: th.Muted}, {s: mbStr(p.DiskBps), c: th.Fg, w: font.SemiBold, tab: true},
+				{s: "MB/s", c: th.TextQuiet}, {s: p.Comm, c: th.Fg, w: font.SemiBold}}
+			if g.Kind == procs.Agent || g.Kind == procs.App {
+				who = append(who, span{s: "in " + v.label(g.Key), c: th.Muted})
+			}
+			parts = append(parts, gap(gtx.Dp(6)), rigid(func(gtx layout.Context) layout.Dimensions {
+				return v.rich(gtx, theme.Size12, who...)
+			}))
+		}
 		for i, d := range drives {
 			if i > 0 {
 				parts = append(parts, v.rule(gtx.Dp(10), gtx.Dp(10))...)
@@ -377,7 +475,7 @@ func diskTop(h []entry, name string) float64 {
 	peak := 0.0
 	for _, e := range h {
 		rw := e.drives[name]
-		peak = max(peak, rw[0], rw[1])
+		peak = max(peak, rw.r, rw.w)
 	}
 	return ceilPow2(peak/1e6*1.1, 4)
 }
@@ -391,7 +489,17 @@ func (v *View) drive(gtx layout.Context, d sample.Drive) []part {
 	top := diskTop(h, d.Name)
 	head := func(gtx layout.Context) layout.Dimensions {
 		busy := func(gtx layout.Context) layout.Dimensions {
-			return v.rich(gtx, theme.Size12, span{s: "busy", c: th.Muted}, span{s: strconv.Itoa(int(math.Round(d.Busy*100))) + "%", c: th.Fg, w: font.SemiBold, tab: true})
+			if d.Wait == 0 && d.Queue == 0 {
+				return v.rich(gtx, theme.Size12, span{s: "idle", c: th.Muted})
+			}
+			wait := []span{{s: "waits", c: th.Muted}, {s: waitStr(d.Wait), c: th.Fg, w: font.SemiBold, tab: true}}
+			j := jamOf(d)
+			if j == jamOK {
+				return v.rich(gtx, theme.Size12, wait...)
+			}
+			word, c := v.jamWord(j)
+			return v.rich(gtx, theme.Size12, append([]span{{s: word, c: c, w: font.SemiBold}}, append(wait,
+				span{s: "·", c: th.TextQuiet}, span{s: strconv.Itoa(int(math.Round(d.Queue))), c: th.Fg, w: font.SemiBold, tab: true}, span{s: "queued", c: th.Muted})...)...)
 		}
 		mounts := mountNames(d.Mounts)
 		if narrow(gtx) || mounts == "" {
@@ -403,9 +511,9 @@ func (v *View) drive(gtx layout.Context, d sample.Drive) []part {
 			return v.rich(gtx, theme.Size12, span{s: d.Name, c: th.Fg, w: font.SemiBold}, span{s: mounts, c: th.Muted})
 		}, busy)
 	}
-	graph := v.spark(top*1e6, top*1e6/4, 1e6, "MB/s",
-		line{val: func(e entry) float64 { return e.drives[d.Name][1] }, c: th.Blue, fill: true},
-		line{val: func(e entry) float64 { return e.drives[d.Name][0] }, c: cIOOut, dashd: true})
+	graph := v.spark(top*1e6, top*1e6/4, 1e6, "MB/s", func(e entry) color.NRGBA { return v.jamShade(e.drives[d.Name].jam) },
+		line{val: func(e entry) float64 { return e.drives[d.Name].w }, c: th.Blue, fill: true},
+		line{val: func(e entry) float64 { return e.drives[d.Name].r }, c: cIOOut, dashd: true})
 	div, unit := unitOf(float64(d.Size))
 	size := v.kv([]span{
 		{s: inUnit(float64(d.Used), div) + " " + unit, c: th.Fg}, {s: "used ·", c: th.TextQuiet},
@@ -439,7 +547,7 @@ func (v *View) netCard(gtx layout.Context) layout.Dimensions {
 	}
 	top = ceilPow2(top*1.1, 1<<20)
 	ndiv, nunit := unitOf(top)
-	graph := v.spark(top, top/4, ndiv, nunit+"/s",
+	graph := v.spark(top, top/4, ndiv, nunit+"/s", nil,
 		line{val: func(e entry) float64 { return e.nets[n.Name][0] }, c: th.Blue, fill: true},
 		line{val: func(e entry) float64 { return e.nets[n.Name][1] }, c: cIOOut, dashd: true})
 	row := func(name string, dash bool, c color.NRGBA, rate, peak float64, total uint64) layout.Widget {

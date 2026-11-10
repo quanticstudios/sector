@@ -20,6 +20,7 @@ type fake struct {
 	exe, cwd     string
 	argv         []string
 	unit         string // its systemd unit; "" writes no cgroup file
+	io           uint64 // read_bytes + write_bytes; 0 writes no io file
 }
 
 // writeProc writes a fake /proc holding ps at uptime seconds, and points
@@ -61,6 +62,9 @@ func writeProc(t *testing.T, root string, up float64, ps map[int]fake) {
 		}
 		if p.cwd != "" {
 			link(p.cwd, d+"/cwd")
+		}
+		if p.io != 0 {
+			w(d+"/io", fmt.Sprintf("rchar: 1\nwchar: 1\nsyscr: 1\nsyscw: 1\nread_bytes: %d\nwrite_bytes: %d\ncancelled_write_bytes: 0\n", p.io/4, p.io-p.io/4))
 		}
 		if p.unit != "" {
 			w(d+"/cgroup", "0::/user.slice/user-1000.slice/user@1000.service/app.slice/"+p.unit+"\n")
@@ -344,6 +348,9 @@ func TestScanRates(t *testing.T) {
 	bump(301, 100) // chromium: 0.5
 	bump(200, 4)   // ghostty: 0.02, over the fold line
 	bump(400, 1)   // tinyapp: 0.005, under it
+	p := ps[223]
+	p.io += 300e6 // vitest: 150 MB/s to disk
+	ps[223] = p
 	// A vitest that started half a second ago and used 0.4 s.
 	ps[224] = fake{ppid: 211, comm: "vitest", start: 10150, ticks: 40}
 	delete(ps, 212) // gone between scans
@@ -358,6 +365,9 @@ func TestScanRates(t *testing.T) {
 	}
 	if g.Procs[0].PID != 223 {
 		t.Errorf("busiest member is %d, want 223", g.Procs[0].PID)
+	}
+	if !near(g.Procs[0].DiskBps, 150e6) || !near(g.DiskBps, 150e6) {
+		t.Errorf("vitest disk %v, group %v, want 150 MB/s", g.Procs[0].DiskBps, g.DiskBps)
 	}
 	if g := find(tb, "agent:211:1000"); g == nil || !near(g.Cores, 0.2) || pids(g)[212] {
 		t.Errorf("acme-api claude: %+v", g)

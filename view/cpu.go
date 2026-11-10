@@ -158,18 +158,21 @@ func (v *View) cpuGraph(gtx layout.Context, h []entry, end time.Time, bands []ba
 		}
 	}
 	plot := clip.Rect{Max: image.Pt(pw, size.Y)}.Push(gtx.Ops)
-	for k := range tops {
-		lower := make([]f32.Point, len(tops[k]))
-		for j, p := range tops[k] {
-			lower[j] = f32.Pt(p.X, y0)
-			if k > 0 {
-				lower[j] = tops[k-1][j]
+	for _, r := range runs(h) {
+		for k := range tops {
+			top := tops[k][r[0]:r[1]]
+			lower := make([]f32.Point, len(top))
+			for j, p := range top {
+				lower[j] = f32.Pt(p.X, y0)
+				if k > 0 {
+					lower[j] = tops[k-1][r[0]+j]
+				}
 			}
+			area(gtx, top, lower, theme.Alpha(bands[k].c, 0.26))
 		}
-		area(gtx, tops[k], lower, theme.Alpha(bands[k].c, 0.26))
-	}
-	for k := range tops {
-		polyline(gtx, tops[k], float32(gtx.Dp(1.5)), bands[k].c)
+		for k := range tops {
+			polyline(gtx, tops[k][r[0]:r[1]], float32(gtx.Dp(1.5)), bands[k].c)
+		}
 	}
 	plot.Pop()
 	hline(gtx, 0, pw, int(y0), cAxis)

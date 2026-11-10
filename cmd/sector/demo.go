@@ -117,9 +117,11 @@ func (d *demo) next() (sample.Snapshot, procs.Table) {
 
 	s.Drives = []sample.Drive{
 		{Name: "nvme0n1", Mounts: []string{"/", "/home", "/var/log", "/var/cache/pacman/pkg"}, Size: 929 << 30, Used: 481 << 30, Free: 448 << 30,
-			ReadBps: d.walk("r0", 2.3, 1.6, 0.02) * 1e6, WriteBps: d.walk("w0", 21, 12, 0.02) * 1e6, Busy: d.walk("b0", 0.14, 0.06, 0.01)},
+			ReadBps: d.walk("r0", 2.3, 1.6, 0.02) * 1e6, WriteBps: d.walk("w0", 21, 12, 0.02) * 1e6, Busy: d.walk("b0", 0.14, 0.06, 0.01),
+			Wait: d.walk("q0", 0.0005, 0.0003, 0.0001), Queue: d.walk("n0", 0.8, 0.5, 0.05)},
 		{Name: "nvme1n1", Mounts: []string{"/data", "/data/work", "/data/scratch"}, Size: 931 << 30, Used: 461 << 30, Free: 470 << 30,
-			ReadBps: d.walk("r1", 1.0, 0.8, 0.02) * 1e6, WriteBps: d.walk("w1", 7, 5, 0.02) * 1e6, Busy: d.walk("b1", 0.04, 0.03, 0.01)},
+			ReadBps: d.walk("r1", 1.0, 0.8, 0.02) * 1e6, WriteBps: d.walk("w1", 7, 5, 0.02) * 1e6, Busy: d.walk("b1", 0.04, 0.03, 0.01),
+			Wait: d.walk("q1", 0.0003, 0.0002, 0.0001), Queue: d.walk("n1", 0.2, 0.1, 0.05)},
 	}
 	rx, tx := d.walk("rx", 2.05, 0.9, 0.02)*(1<<20), d.walk("tx", 0.53, 0.3, 0.02)*(1<<20)
 	d.rxTot += uint64(rx)

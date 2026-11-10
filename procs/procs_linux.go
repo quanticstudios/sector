@@ -67,6 +67,7 @@ type procKey struct {
 // seen is what a scan keeps about a process for the next one.
 type seen struct {
 	ticks uint64 // utime + stime
+	io    uint64 // read_bytes + write_bytes
 	comm  string // an exec changes it, and with it the agent
 	agent string
 	uid   int
@@ -133,16 +134,24 @@ func (s *Scanner) scan() (Table, error) {
 			old.unit = readUnit(pid)
 		}
 		p.agent, p.uid, p.unit, p.shell = old.agent, old.uid, old.unit, old.shell
+		io := readIO(pid)
 		if !first && elapsed > 0 {
-			if had && ticks >= old.ticks {
-				p.Cores = float64(ticks-old.ticks) / clkTck / elapsed
-			} else if !had {
+			if had {
+				if ticks >= old.ticks {
+					p.Cores = float64(ticks-old.ticks) / clkTck / elapsed
+				}
+				if io >= old.io {
+					p.DiskBps = float64(io-old.io) / elapsed
+				}
+			} else {
 				// New since the last scan: all its time fell in the window,
 				// unless it hid from that scan, when its lifetime is the window.
-				p.Cores = float64(ticks) / clkTck / max(elapsed, up-float64(p.start)/clkTck)
+				life := max(elapsed, up-float64(p.start)/clkTck)
+				p.Cores = float64(ticks) / clkTck / life
+				p.DiskBps = float64(io) / life
 			}
 		}
-		old.ticks = ticks
+		old.ticks, old.io = ticks, io
 		next[k] = old
 		ps = append(ps, p)
 	}
@@ -232,6 +241,7 @@ func (s *Scanner) group(ps []*proc) Table {
 		gp.Cores += p.Cores
 		gp.RSS += p.RSS
 		gp.Threads += p.Threads
+		gp.DiskBps += p.DiskBps
 	}
 	for _, p := range ps {
 		switch a := agentOf(p, 0); {
@@ -283,6 +293,7 @@ func (s *Scanner) group(ps []*proc) Table {
 			other.Procs = append(other.Procs, g.Procs...)
 			other.Cores += g.Cores
 			other.RSS += g.RSS
+			other.DiskBps += g.DiskBps
 			other.Threads += g.Threads
 			other.Folded++
 			continue
@@ -386,6 +397,24 @@ func readStat(pid int) (*proc, uint64, bool) {
 		start: num(19),
 	}
 	return p, num(11) + num(12), true
+}
+
+// readIO is the bytes pid has read from and written to storage, from
+// /proc/<pid>/io, 0 when unreadable, as for another user's process.
+func readIO(pid int) uint64 {
+	b, err := os.ReadFile(procRoot + "/" + strconv.Itoa(pid) + "/io")
+	if err != nil {
+		return 0
+	}
+	var n uint64
+	for line := range strings.Lines(string(b)) {
+		k, v, _ := strings.Cut(line, ":")
+		if k == "read_bytes" || k == "write_bytes" {
+			x, _ := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
+			n += x
+		}
+	}
+	return n
 }
 
 // readUID is the real uid on the Uid line of /proc/<pid>/status.
