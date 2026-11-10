@@ -16,6 +16,12 @@ request merges, `git pull --ff-only` and run `sh scripts/release.sh --tag`.
 It tags the release commit on `main` and pushes the tag once, which starts
 the release build. Either step takes `--dry-run`.
 
+## Unreleased
+
+- The Cores card numbers cores 0 up. On an Intel hybrid CPU such as the
+  i9-13900 it read "cores 0 to 47", the kernel's core ids, for 24 cores;
+  it now reads "cores 0 to 23, 8 with two threads".
+
 ## v0.1.2
 
 - The memory, disk and network graphs keep only as much room on the right
