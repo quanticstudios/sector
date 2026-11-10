@@ -49,6 +49,8 @@ type View struct {
 
 	filter    widget.Editor
 	seg       [3]widget.Clickable
+	hidden    [nCards]bool // cards the user switched off in the title bar
+	panel     [nCards]widget.Clickable
 	pause     widget.Clickable
 	scroll    layout.List
 	hover     hover
@@ -224,7 +226,7 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 func (v *View) dash(gtx layout.Context, avail int) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	pad, gp := gtx.Dp(12), gtx.Dp(10)
-	p, fr := places(float32(w) / gtx.Metric.PxPerDp)
+	p, fr := places(float32(w)/gtx.Metric.PxPerDp, v.hidden)
 	cards := [nCards]layout.Widget{v.cpuCard, v.coresCard, v.memCard, v.diskCard, v.netCard, v.procsCard}
 
 	// Each card is measured as tall as it wants, and as short as it can
@@ -240,6 +242,9 @@ func (v *View) dash(gtx layout.Context, avail int) layout.Dimensions {
 	var nat, floor [nCards]int
 	v.measuring = true
 	for i := range cards {
+		if v.hidden[i] {
+			continue
+		}
 		nat[i] = measure(i, big)
 		floor[i] = nat[i]
 		if fr >= 0 {
@@ -263,6 +268,9 @@ func (v *View) dash(gtx layout.Context, avail int) layout.Dimensions {
 		ys[r+1] = ys[r] + h + gp
 	}
 	for i, card := range cards {
+		if v.hidden[i] {
+			continue
+		}
 		x, cw := colSpan(p[i], w, pad, gp)
 		h := ys[p[i].row+p[i].rows] - gp - ys[p[i].row]
 		t := op.Offset(image.Pt(x, ys[p[i].row])).Push(gtx.Ops)

@@ -6,19 +6,56 @@ import (
 )
 
 func TestPlaces(t *testing.T) {
-	wide, fr := places(1440)
+	wide, fr := places(1440, [nCards]bool{})
 	if fr != 1 || wide[cardProcs] != (place{6, 6, 1, 2}) || wide[cardMem] != (place{0, 3, 1, 1}) || wide[cardNet] != (place{0, 6, 2, 1}) {
 		t.Fatalf("wide: %v fr %d", wide, fr)
 	}
-	mid, fr := places(1000)
+	mid, fr := places(1000, [nCards]bool{})
 	if fr != -1 || mid[cardMem] != (place{0, 6, 2, 1}) || mid[cardDisk] != (place{6, 6, 2, 1}) || mid[cardCores].span != 12 {
 		t.Fatalf("1000: %v", mid)
 	}
-	narrow, _ := places(720)
+	narrow, _ := places(720, [nCards]bool{})
 	for i, c := range narrow {
 		if c.col != 0 || c.span != 12 || c.row != i {
 			t.Fatalf("720: card %d at %v", i, c)
 		}
+	}
+}
+
+func TestPlacesHidden(t *testing.T) {
+	var h [nCards]bool
+	h[cardCores], h[cardDisk] = true, true
+	p, fr := places(1440, h)
+	// Memory takes the disks' half of its row, and processes move up to
+	// the top of the right column and reach down to the network row.
+	if p[cardMem] != (place{0, 6, 1, 1}) || p[cardProcs] != (place{6, 6, 0, 3}) || p[cardCores].rows != 0 || fr != 1 {
+		t.Fatalf("no cores, no disks: %v fr %d", p, fr)
+	}
+	h = [nCards]bool{cardCores: true, cardProcs: true}
+	if p, _ := places(1440, h); p[cardCPU] != (place{0, 12, 0, 1}) || p[cardMem] != (place{0, 6, 1, 1}) || p[cardNet] != (place{0, 12, 2, 1}) {
+		t.Fatalf("no right column: %v", p)
+	}
+	h = [nCards]bool{cardCPU: true, cardMem: true, cardDisk: true, cardNet: true}
+	if p, fr := places(1440, h); p[cardCores] != (place{0, 12, 0, 1}) || p[cardProcs] != (place{0, 12, 1, 1}) || fr != 1 {
+		t.Fatalf("no left column: %v fr %d", p, fr)
+	}
+	h = [nCards]bool{cardCores: true}
+	if p, _ := places(900, h); p[cardCPU].row != 0 || p[cardMem] != (place{0, 6, 1, 1}) || p[cardProcs].row != 3 {
+		t.Fatalf("900 without cores: %v", p)
+	}
+}
+
+func TestToggleKeepsOneCard(t *testing.T) {
+	v := New(nil)
+	for c := range nCards {
+		v.toggle(c)
+	}
+	if !v.hidden[cardProcs-1] || v.hidden[cardProcs] {
+		t.Fatalf("hidden %v, want every card but processes", v.hidden)
+	}
+	v.toggle(cardCPU)
+	if v.hidden[cardCPU] {
+		t.Fatal("a hidden card did not come back")
 	}
 }
 
@@ -37,7 +74,7 @@ func TestColSpan(t *testing.T) {
 }
 
 func TestRowHeights(t *testing.T) {
-	p, fr := places(1440)
+	p, fr := places(1440, [nCards]bool{})
 	nat := [nCards]int{cardCPU: 240, cardCores: 260, cardMem: 200, cardDisk: 300, cardNet: 120, cardProcs: 100}
 	floor := [nCards]int{cardCPU: 120, cardCores: 200, cardMem: 150, cardDisk: 180, cardNet: 100, cardProcs: 40}
 	if h := rowHeights(p, nat, floor, 900, 10, fr); !slices.Equal(h, []int{260, 900 - 260 - 120 - 20, 120}) {
@@ -71,7 +108,7 @@ func TestRowHeights(t *testing.T) {
 		t.Fatalf("tall processes: %v", h)
 	}
 	// Narrow layouts keep the natural heights and scroll.
-	p, fr = places(700)
+	p, fr = places(700, [nCards]bool{})
 	if h := rowHeights(p, nat, floor, 400, 10, fr); !slices.Equal(h, []int{240, 260, 200, 300, 120, 600}) {
 		t.Fatalf("narrow: %v", h)
 	}
