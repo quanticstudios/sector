@@ -13,6 +13,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
+	"gioui.org/widget"
 
 	"github.com/quanticstudios/sector/theme"
 )
@@ -29,8 +30,13 @@ func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 	if v.pause.Clicked(gtx) {
 		v.paused.Store(!v.paused.Load())
 	}
+	for i := range v.panel {
+		if v.panel[i].Clicked(gtx) {
+			v.toggle(cardID(i))
+		}
+	}
 	wdp := float32(gtx.Constraints.Max.X) / gtx.Metric.PxPerDp
-	roomy, tiny := wdp >= 1100, wdp <= 720
+	roomy, tiny := wdp >= 1240, wdp <= 720
 
 	h := gtx.Dp(48)
 	w := gtx.Constraints.Max.X
@@ -56,6 +62,9 @@ func (v *View) titleBar(gtx layout.Context, now time.Time) layout.Dimensions {
 			}
 			return v.filterField(gtx, gtx.Dp(unit.Dp(fw)))
 		}),
+	}
+	if wdp >= 960 {
+		children = append(children, layout.Rigid(sp.Layout), layout.Rigid(v.panels))
 	}
 	if !tiny {
 		children = append(children, layout.Rigid(sp.Layout), layout.Rigid(v.segmented))
@@ -169,19 +178,57 @@ func (v *View) filterField(gtx layout.Context, w int) layout.Dimensions {
 	return layout.Dimensions{Size: r.Max}
 }
 
+// panelNames label the title bar's card switches, in cardID order.
+var panelNames = [nCards]string{"CPU", "Cores", "Mem", "Disks", "Net", "Procs"}
+
+// toggle shows or hides card c, keeping at least one card shown.
+func (v *View) toggle(c cardID) {
+	if !v.hidden[c] {
+		shown := 0
+		for _, h := range v.hidden {
+			if !h {
+				shown++
+			}
+		}
+		if shown == 1 {
+			return
+		}
+	}
+	v.hidden[c] = !v.hidden[c]
+}
+
+// panels switches each card on or off, as btop's box keys do; the grid
+// closes up around the hidden ones.
+func (v *View) panels(gtx layout.Context) layout.Dimensions {
+	btns := make([]*widget.Clickable, nCards)
+	for i := range v.panel {
+		btns[i] = &v.panel[i]
+	}
+	return v.segs(gtx, btns, panelNames[:], func(i int) bool { return !v.hidden[i] })
+}
+
 // segmented is the 1, 2 and 5 second interval control.
 func (v *View) segmented(gtx layout.Context) layout.Dimensions {
-	th := v.th
 	cur := v.Interval()
+	btns := make([]*widget.Clickable, len(v.seg))
+	labels := make([]string, len(v.seg))
+	for i := range v.seg {
+		btns[i], labels[i] = &v.seg[i], fmt.Sprintf("%d s", int(intervals[i]/time.Second))
+	}
+	return v.segs(gtx, btns, labels, func(i int) bool { return intervals[i] == cur })
+}
+
+// segs is a row of buttons in one frame, the ones on raised.
+func (v *View) segs(gtx layout.Context, btns []*widget.Clickable, labels []string, isOn func(int) bool) layout.Dimensions {
+	th := v.th
 	pad := gtx.Dp(3)
 	m := op.Record(gtx.Ops)
 	x := pad
 	bh := gtx.Dp(22)
-	for i := range v.seg {
-		on := intervals[i] == cur
-		label := fmt.Sprintf("%d s", int(intervals[i]/time.Second))
+	for i, btn := range btns {
+		on, label := isOn(i), labels[i]
 		t := op.Offset(image.Pt(x, pad)).Push(gtx.Ops)
-		d := v.seg[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		d := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			lm := op.Record(gtx.Ops)
 			col := th.Muted
 			if on {
@@ -193,7 +240,7 @@ func (v *View) segmented(gtx layout.Context) layout.Dimensions {
 			switch {
 			case on:
 				rect(gtx, image.Rectangle{Max: s}, gtx.Dp(5), th.SurfaceElevated)
-			case v.seg[i].Hovered():
+			case btn.Hovered():
 				rect(gtx, image.Rectangle{Max: s}, gtx.Dp(5), th.SurfaceSecondary)
 			}
 			pointer.CursorPointer.Add(gtx.Ops)

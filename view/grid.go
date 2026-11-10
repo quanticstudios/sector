@@ -18,29 +18,80 @@ const (
 // rows spanned.
 type place struct{ col, span, row, rows int }
 
-// places puts the cards for a dashboard wdp dp wide, like the concept's
-// container queries. fr is the row that takes spare height, -1 for none:
+// places puts the shown cards for a dashboard wdp dp wide, like the
+// concept's container queries. A hidden card gets the zero place, which
+// spans no row. fr is the row that takes spare height, -1 for none:
 // narrow layouts scroll instead.
-func places(wdp float32) (p [nCards]place, fr int) {
+//
+// Wide, the cards stand in two columns: CPU, memory beside disks, and
+// network on the left, cores and processes on the right. A column's last
+// card stretches down to the other column's bottom, and when one column
+// is empty the other takes the full width. Narrower, the same rows stack
+// at full width, memory beside disks until 720 dp.
+func places(wdp float32, hidden [nCards]bool) (p [nCards]place, fr int) {
+	// rows keeps the shown cards of each row and drops the empty rows.
+	rows := func(rs ...[]cardID) [][]cardID {
+		var out [][]cardID
+		for _, r := range rs {
+			var keep []cardID
+			for _, c := range r {
+				if !hidden[c] {
+					keep = append(keep, c)
+				}
+			}
+			if len(keep) > 0 {
+				out = append(out, keep)
+			}
+		}
+		return out
+	}
+	// put lays rs into the columns from col, span wide, from row 0; its
+	// last row reaches down to row end. Cards in a row share it evenly.
+	put := func(rs [][]cardID, col, span, end int) {
+		for i, r := range rs {
+			n := 1
+			if i == len(rs)-1 {
+				n = max(1, end-i)
+			}
+			w := span / len(r)
+			for j, c := range r {
+				p[c] = place{col + j*w, w, i, n}
+			}
+		}
+	}
+	rowOf := func(c cardID) int {
+		if hidden[c] {
+			return -1
+		}
+		return p[c].row
+	}
 	switch {
 	case wdp > 1000:
-		return [nCards]place{
-			cardCPU: {0, 6, 0, 1}, cardCores: {6, 6, 0, 1},
-			cardMem: {0, 3, 1, 1}, cardDisk: {3, 3, 1, 1},
-			cardNet: {0, 6, 2, 1}, cardProcs: {6, 6, 1, 2},
-		}, 1
+		left := rows([]cardID{cardCPU}, []cardID{cardMem, cardDisk}, []cardID{cardNet})
+		right := rows([]cardID{cardCores}, []cardID{cardProcs})
+		n := max(len(left), len(right))
+		switch {
+		case len(right) == 0:
+			put(left, 0, 12, n)
+		case len(left) == 0:
+			put(right, 0, 12, n)
+		default:
+			put(left, 0, 6, n)
+			put(right, 6, 6, n)
+		}
+		// The row with the graphs that grow best takes the spare height.
+		for _, c := range []cardID{cardMem, cardDisk, cardProcs, cardCPU, cardNet, cardCores} {
+			if r := rowOf(c); r >= 0 {
+				return p, r
+			}
+		}
+		return p, -1
 	case wdp > 720:
-		return [nCards]place{
-			cardCPU: {0, 12, 0, 1}, cardCores: {0, 12, 1, 1},
-			cardMem: {0, 6, 2, 1}, cardDisk: {6, 6, 2, 1},
-			cardNet: {0, 12, 3, 1}, cardProcs: {0, 12, 4, 1},
-		}, -1
+		put(rows([]cardID{cardCPU}, []cardID{cardCores}, []cardID{cardMem, cardDisk}, []cardID{cardNet}, []cardID{cardProcs}), 0, 12, 0)
+	default:
+		put(rows([]cardID{cardCPU}, []cardID{cardCores}, []cardID{cardMem}, []cardID{cardDisk}, []cardID{cardNet}, []cardID{cardProcs}), 0, 12, 0)
 	}
-	return [nCards]place{
-		cardCPU: {0, 12, 0, 1}, cardCores: {0, 12, 1, 1},
-		cardMem: {0, 12, 2, 1}, cardDisk: {0, 12, 3, 1},
-		cardNet: {0, 12, 4, 1}, cardProcs: {0, 12, 5, 1},
-	}, -1
+	return p, -1
 }
 
 // colSpan is the x and width in px of a card at p, in a grid w px wide
