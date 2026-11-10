@@ -16,6 +16,12 @@ request merges, `git pull --ff-only` and run `sh scripts/release.sh --tag`.
 It tags the release commit on `main` and pushes the tag once, which starts
 the release build. Either step takes `--dry-run`.
 
+## Unreleased
+
+- sector keeps sampling while its window is on another workspace or
+  covered, and fills the graphs in when you look again, instead of
+  leaving a gap for the time nobody looked.
+
 ## v0.1.7
 
 - The title bar switches each card on and off, as btop's box toggles do:
