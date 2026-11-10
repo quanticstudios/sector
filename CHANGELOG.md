@@ -16,6 +16,12 @@ request merges, `git pull --ff-only` and run `sh scripts/release.sh --tag`.
 It tags the release commit on `main` and pushes the tag once, which starts
 the release build. Either step takes `--dry-run`.
 
+## Unreleased
+
+- A graph's top axis number and its unit stay in the gutter, the unit on
+  the line below, so they no longer run into the plot's labels such as
+  "cached".
+
 ## v0.1.3
 
 - The Cores card numbers cores 0 up. On an Intel hybrid CPU such as the

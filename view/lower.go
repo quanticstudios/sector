@@ -72,27 +72,40 @@ func (v *View) spark(top, step, div float64, unit string, lines ...line) layout.
 				marks = append(marks, tick{yy, tickStr(t / div)})
 			}
 		}
-		// The gutter fits the widest number, as the CPU graph's does; the
-		// top label, which carries the unit, reaches over the plot and the
-		// top rule stops short of it.
+		// Every label stays in the gutter, which fits the widest of them as
+		// the CPU graph's does: the top number on the top rule, its unit on
+		// the line below when the graph is tall enough, the other numbers on
+		// their gridlines.
 		quiet := v.th.TextQuiet
-		measure := func(s string) int {
+		measure := func(s string) image.Rectangle {
 			r, _ := v.placeText(gtx, theme.Size11, 0, 0, 0, 0, quiet, s, func(image.Rectangle) bool { return false })
-			return r.Dx()
+			return r
 		}
-		gw := 0
+		topStr := tickStr(top / div)
+		withUnit := sh >= gtx.Dp(64)
+		gw := measure(topStr).Dx()
+		if withUnit {
+			gw = max(gw, measure(unit).Dx())
+		}
 		for _, m := range marks {
-			gw = max(gw, measure(m.s))
+			gw = max(gw, measure(m.s).Dx())
 		}
 		pw := w - gw - gtx.Dp(8)
-		topStr := tickStr(top/div) + " " + unit
 		x := func(t time.Time) float32 { return float32(pw) * (1 - float32(end.Sub(t))/float32(window)) }
-		hline(gtx, 0, min(pw, w-measure(topStr)-gtx.Dp(8)), 0, cSparkTop)
+		hline(gtx, 0, pw, 0, cSparkTop)
 		hline(gtx, 0, pw, sh-1, cSparkBot)
-		v.placeText(gtx, theme.Size11, w, 0, 1, 0.5, quiet, topStr, nil)
+		tr, _ := v.placeText(gtx, theme.Size11, w, 0, 1, 0.5, quiet, topStr, nil)
+		unitEnd := 0
+		if withUnit {
+			ur, _ := v.placeText(gtx, theme.Size11, w, tr.Max.Y, 1, 0, quiet, unit, nil)
+			unitEnd = ur.Max.Y
+		}
 		for _, m := range marks {
 			if m.y < sh {
 				hline(gtx, 0, pw, m.y, cGridLine)
+			}
+			if m.y < sh && m.y-tr.Dy()/2 < unitEnd+gtx.Dp(2) {
+				continue
 			}
 			v.placeText(gtx, theme.Size11, w, m.y, 1, 0.5, quiet, m.s, nil)
 		}
