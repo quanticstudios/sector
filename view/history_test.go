@@ -20,8 +20,9 @@ func TestKeep(t *testing.T) {
 	if len(h) != History || h[0].t != t0.Add(10*time.Second) {
 		t.Fatalf("len %d, oldest %v", len(h), h[0].t)
 	}
-	if s := since(h, h[len(h)-1].t.Add(-window)); len(s) != 62 {
-		t.Fatalf("since: %d entries, want 61 in the window and one before", len(s))
+	want := int(window/time.Second) + 2
+	if s := since(h, h[len(h)-1].t.Add(-window)); len(s) != want {
+		t.Fatalf("since: %d entries, want %d: the window and one before", len(s), want)
 	}
 }
 

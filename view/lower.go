@@ -38,7 +38,7 @@ func (v *View) recent() ([]entry, time.Time) {
 	return since(v.hist, end.Add(-window)), end
 }
 
-// spark draws lines over the last minute, scaled so top is the upper rule.
+// spark draws lines over the window, scaled so top is the upper rule.
 // The axis on the right labels top, 0 and a gridline every step, in the
 // unit div bytes called unit; a short graph labels every second gridline,
 // or none. It fills gtx.Constraints.Min.Y, or 48 dp when that is 0.
@@ -263,13 +263,13 @@ func stackedCache(m sample.Mem) uint64 {
 	return min(m.Cached, m.Total-m.Used)
 }
 
-// memCard is memory over the last minute, a bar of used and cached, the
+// memCard is memory over the window, a bar of used and cached, the
 // four free(1) numbers and swap.
 func (v *View) memCard(gtx layout.Context) layout.Dimensions {
 	th := v.th
 	m := v.last.Mem
 	div, unit := unitOf(float64(m.Total))
-	head := v.head("Memory", "last 60 s",
+	head := v.head("Memory", "last "+windowStr,
 		span{s: inUnit(float64(m.Used), div), c: cSoft, tab: true}, span{s: "of", c: th.TextQuiet}, span{s: inUnit(float64(m.Total), div) + " " + unit, c: cSoft})
 	graph := v.spark(float64(m.Total), niceStep(float64(m.Total)/div/4)*div, div, unit,
 		line{val: func(e entry) float64 { return e.used + e.cached }, c: th.MemCache, w: 1, fill: true, tag: "cached " + inUnit(float64(m.Cached), div)},
@@ -352,9 +352,9 @@ func (v *View) diskCard(gtx layout.Context) layout.Dimensions {
 	for _, d := range drives {
 		rd, wr = rd+d.ReadBps, wr+d.WriteBps
 	}
-	sub := strconv.Itoa(len(drives)) + " drives, last 60 s"
+	sub := strconv.Itoa(len(drives)) + " drives, last " + windowStr
 	if len(drives) == 1 {
-		sub = "1 drive, last 60 s"
+		sub = "1 drive, last " + windowStr
 	}
 	head := v.head("Disks", sub, v.ioPair(mbStr(rd), mbStr(wr), false)...)
 	return v.card(gtx, func(gtx layout.Context) layout.Dimensions {

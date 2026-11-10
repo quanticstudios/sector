@@ -101,7 +101,7 @@ func (v *View) cpuCard(gtx layout.Context) layout.Dimensions {
 	}
 	threads := v.threads()
 
-	head := v.head("CPU by group", "last 60 s",
+	head := v.head("CPU by group", "last "+windowStr,
 		span{s: ppFormatPct(cpuPct(total, threads)) + "%", c: cSoft, tab: true}, span{s: "of", c: th.TextQuiet}, span{s: strconv.Itoa(threads) + " threads", c: cSoft})
 	legend := func(gtx layout.Context) layout.Dimensions {
 		items := make([]layout.Widget, len(bands))
@@ -176,8 +176,8 @@ func (v *View) cpuGraph(gtx layout.Context, h []entry, end time.Time, bands []ba
 	v.staleVeil(gtx, image.Rect(0, 0, pw, int(y0)), true)
 
 	ly := size.Y + gtx.Dp(2)
-	v.placeLabel(gtx, 0, ly, 0, 1, th.TextQuiet, "60 s ago")
-	v.placeLabel(gtx, pw/2, ly, 0.5, 1, th.TextQuiet, "30 s")
+	v.placeLabel(gtx, 0, ly, 0, 1, th.TextQuiet, windowStr+" ago")
+	v.placeLabel(gtx, pw/2, ly, 0.5, 1, th.TextQuiet, "1 min")
 	v.placeLabel(gtx, pw, ly, 1, 1, th.TextQuiet, "now")
 
 	if !v.measuring {

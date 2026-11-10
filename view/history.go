@@ -8,8 +8,10 @@ import (
 	"github.com/quanticstudios/sector/theme"
 )
 
-// window is how much time the graphs show.
-const window = 60 * time.Second
+// window is how much time the graphs show, and windowStr names it.
+const window = 2 * time.Minute
+
+const windowStr = "2 min"
 
 // bandCount is how many groups get their own band in the CPU graph; the
 // rest share "Everything else".

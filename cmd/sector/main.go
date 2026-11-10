@@ -60,9 +60,9 @@ func run() error {
 	read := machine()
 	if *demoFlag {
 		d := newDemo()
-		// Fill the last minute so the graphs start full.
+		// Fill the 2 minute window so the graphs start full.
 		now := time.Now()
-		for i := 60; i > 0; i-- {
+		for i := 120; i > 0; i-- {
 			s, t := d.next()
 			s.Time = now.Add(-time.Duration(i) * time.Second)
 			v.Push(s, t)
