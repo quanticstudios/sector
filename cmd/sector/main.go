@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"gioui.org/app"
@@ -48,6 +49,33 @@ type reading struct {
 	t procs.Table
 }
 
+// backlog holds the readings taken since the window last drew. A window
+// on another workspace gets no frames, so the sampler keeps reading into
+// it and the next frame pushes them all; it keeps the newest
+// view.History, which covers the graphs.
+type backlog struct {
+	mu sync.Mutex
+	rs []reading
+}
+
+func (b *backlog) add(r reading) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.rs = append(b.rs, r)
+	if n := len(b.rs) - view.History; n > 0 {
+		b.rs = append(b.rs[:0], b.rs[n:]...)
+	}
+}
+
+// take empties the backlog and returns what it held, oldest first.
+func (b *backlog) take() []reading {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	rs := b.rs
+	b.rs = nil
+	return rs
+}
+
 func run() error {
 	w := new(app.Window)
 	var ww, wh float32
@@ -56,7 +84,7 @@ func run() error {
 	}
 	w.Option(app.Title("sector"), app.Size(unit.Dp(ww), unit.Dp(wh)))
 	v := view.New(theme.Dark())
-	readings := make(chan reading, 1)
+	readings := new(backlog)
 	read := machine()
 	if *demoFlag {
 		d := newDemo()
@@ -76,10 +104,8 @@ func run() error {
 		case app.DestroyEvent:
 			return e.Err
 		case app.FrameEvent:
-			select {
-			case r := <-readings:
+			for _, r := range readings.take() {
 				v.Push(r.s, r.t)
-			default:
 			}
 			gtx := app.NewContext(&ops, e)
 			v.Layout(gtx)
@@ -104,18 +130,13 @@ func machine() func() reading {
 	}
 }
 
-// sampleLoop calls read every interval and wakes the window. The interval
-// and pause are read from v between samples; a stale read only delays the
-// change by one tick.
-func sampleLoop(w *app.Window, v *view.View, read func() reading, out chan reading) {
+// sampleLoop calls read every interval, adds the reading to out and wakes
+// the window. The interval and pause are read from v between samples; a
+// stale read only delays the change by one tick.
+func sampleLoop(w *app.Window, v *view.View, read func() reading, out *backlog) {
 	for {
 		if !v.Paused() {
-			r := read()
-			select {
-			case <-out:
-			default:
-			}
-			out <- r
+			out.add(read())
 			w.Invalidate()
 		}
 		time.Sleep(v.Interval())
