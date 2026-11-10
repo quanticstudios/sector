@@ -16,7 +16,7 @@ request merges, `git pull --ff-only` and run `sh scripts/release.sh --tag`.
 It tags the release commit on `main` and pushes the tag once, which starts
 the release build. Either step takes `--dry-run`.
 
-## Unreleased
+## v0.1.7
 
 - The title bar switches each card on and off, as btop's box toggles do:
   CPU, Cores, Mem, Disks, Net and Procs. The other cards close up around
