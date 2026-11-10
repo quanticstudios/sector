@@ -16,6 +16,11 @@ request merges, `git pull --ff-only` and run `sh scripts/release.sh --tag`.
 It tags the release commit on `main` and pushes the tag once, which starts
 the release build. Either step takes `--dry-run`.
 
+## Unreleased
+
+- The Disks card lists the drive holding / first, then the others by
+  name.
+
 ## v0.1.8
 
 - sector keeps sampling while its window is on another workspace or
