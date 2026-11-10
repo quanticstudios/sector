@@ -1,6 +1,7 @@
 package view
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -91,5 +92,29 @@ func TestAssignKeepsColors(t *testing.T) {
 	assign(slots, all, []string{"z", "q"})
 	if slots["z"] != 0 || slots["q"] != 1 {
 		t.Fatalf("steal: %v", slots)
+	}
+}
+
+func TestRuns(t *testing.T) {
+	at := func(secs ...int) []entry {
+		var h []entry
+		for _, s := range secs {
+			h = append(h, entry{t: time.Unix(int64(s), 0)})
+		}
+		return h
+	}
+	for _, c := range []struct {
+		h    []entry
+		want [][2]int
+	}{
+		{nil, nil},
+		{at(0), [][2]int{{0, 1}}},
+		{at(0, 5, 10, 15), [][2]int{{0, 4}}},            // 5 s apart: the slowest interval, no gap
+		{at(0, 2, 4, 50, 52), [][2]int{{0, 3}, {3, 5}}}, // a hidden tab for 46 s
+		{at(0, 2, 30), [][2]int{{0, 2}, {2, 3}}},
+	} {
+		if got := runs(c.h); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("runs at %v: %v, want %v", len(c.h), got, c.want)
+		}
 	}
 }

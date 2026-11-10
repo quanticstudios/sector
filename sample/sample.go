@@ -71,6 +71,12 @@ type Drive struct {
 	Size, Used, Free  uint64
 	ReadBps, WriteBps float64 // bytes per second
 	Busy              float64 // share of the interval with I/O in flight, 0 to 1
+	// Wait is the seconds an average request took to finish, time in the
+	// queue included: what a program reading or writing the drive feels.
+	// With requests in flight all interval and none finished, it is the
+	// interval. Queue is the average number of requests in flight.
+	Wait, Queue float64
+	Rotational  bool // a spinning disk, from /sys/block/<name>/queue/rotational
 }
 
 // Net is one network interface.

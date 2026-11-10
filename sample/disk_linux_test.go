@@ -1,6 +1,7 @@
 package sample
 
 import (
+	"math"
 	"os"
 	"reflect"
 	"testing"
@@ -58,9 +59,19 @@ func TestDriveRates(t *testing.T) {
 		if d.Model != "Acme NVMe 2TB" || d.Size != 110 || d.Used != 41 || d.Free != 69 {
 			t.Errorf("nvme0n1 %+v", d)
 		}
-		if e := drives[1]; e.Size != 500 || e.ReadBps != 0 || e.Busy != 0 {
+		if e := drives[1]; e.Size != 500 || e.ReadBps != 0 || e.Busy != 0 || e.Wait != 0 {
 			t.Errorf("nvme1n1 %+v", e)
 		}
+		// 150 requests finished in 130 ms between them; 130 ms of requests
+		// in flight over the interval.
+		if want := 130.0 / 150 / 1000; math.Abs(d.Wait-want) > 1e-12 || math.Abs(d.Queue-0.13/tc.dt) > 1e-12 {
+			t.Errorf("dt %v: wait %v queue %v, want %v %v", tc.dt, d.Wait, d.Queue, want, 0.13/tc.dt)
+		}
+	}
+	// nvme1n1 had I/O in flight the whole 50 ms and finished nothing.
+	stuck := sampler{disks: parseDiskstats(" 259 3 nvme1n1 50 0 1000 20 20 0 400 10 0 50 0\n")}
+	if drives, _ := stuck.readDrives(0.05); drives[1].Wait != 0.05 {
+		t.Errorf("stuck drive waits %v, want the interval", drives[1].Wait)
 	}
 	s := sampler{}
 	drives, _ := s.readDrives(0)

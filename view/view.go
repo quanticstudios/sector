@@ -91,7 +91,7 @@ func (v *View) Push(s sample.Snapshot, t procs.Table) {
 		s.Time = v.pushedAt
 	}
 	v.last, v.table, v.stale = s, t, time.Time{}
-	e := entry{t: s.Time, cores: map[string]float64{}, drives: map[string][2]float64{}, nets: map[string][2]float64{},
+	e := entry{t: s.Time, cores: map[string]float64{}, drives: map[string]diskRate{}, nets: map[string][2]float64{},
 		used: float64(s.Mem.Used), cached: float64(stackedCache(s.Mem))}
 	live := map[string]bool{}
 	for _, g := range t.Groups {
@@ -104,7 +104,7 @@ func (v *View) Push(s sample.Snapshot, t procs.Table) {
 		e.total = s.CPU.Total * float64(len(s.CPU.Threads))
 	}
 	for _, d := range s.Drives {
-		e.drives[d.Name] = [2]float64{d.ReadBps, d.WriteBps}
+		e.drives[d.Name] = diskRate{d.ReadBps, d.WriteBps, jamOf(d)}
 	}
 	for _, n := range s.Nets {
 		e.nets[n.Name] = [2]float64{n.RxBps, n.TxBps}

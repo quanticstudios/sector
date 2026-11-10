@@ -144,3 +144,16 @@ func mountNames(mounts []string) string {
 	}
 	return strings.Join(names, ", ")
 }
+
+// waitStr is a request's wait, given in seconds, as "0.4 ms", "16 ms" or
+// "1.2 s".
+func waitStr(sec float64) string {
+	ms := sec * 1000
+	switch {
+	case ms >= 999.5:
+		return strconv.FormatFloat(sec, 'f', 1, 64) + " s"
+	case ms >= 9.95:
+		return strconv.FormatFloat(ms, 'f', 0, 64) + " ms"
+	}
+	return strconv.FormatFloat(ms, 'f', 1, 64) + " ms"
+}
