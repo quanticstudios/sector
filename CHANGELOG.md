@@ -16,7 +16,7 @@ request merges, `git pull --ff-only` and run `sh scripts/release.sh --tag`.
 It tags the release commit on `main` and pushes the tag once, which starts
 the release build. Either step takes `--dry-run`.
 
-## Unreleased
+## v0.1.6
 
 - Each drive says how long it keeps programs waiting instead of "busy
   100%", which an NVMe drive reads under any load: "waits 0.4 ms", or
