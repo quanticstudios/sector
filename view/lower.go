@@ -50,32 +50,51 @@ func (v *View) spark(top, step, div float64, unit string, lines ...line) layout.
 		if sh == 0 {
 			sh = gtx.Dp(48)
 		}
-		pw := w - gtx.Dp(60)
 		if top <= 0 {
 			top = 1
 		}
-		x := func(t time.Time) float32 { return float32(pw) * (1 - float32(end.Sub(t))/float32(window)) }
 		y := func(val float64) float32 {
 			return float32(sh-1) - float32(math.Min(1, math.Max(0, val/top)))*float32(sh-3)
 		}
-		quiet := v.th.TextQuiet
-		hline(gtx, 0, pw, 0, cSparkTop)
-		hline(gtx, 0, pw, sh-1, cSparkBot)
-		v.placeText(gtx, theme.Size11, w, 0, 1, 0.5, quiet, tickStr(top/div)+" "+unit, nil)
-		v.placeText(gtx, theme.Size11, w, sh, 1, 0.5, quiet, "0", nil)
 		ts := ticks(top, step)
 		room := gtx.Dp(22)
 		every := 1
 		for every <= len(ts) && float32(sh-3)*float32(step*float64(every)/top) < float32(room) {
 			every *= 2
 		}
+		type tick struct {
+			y int
+			s string
+		}
+		marks := []tick{{sh, "0"}}
 		for i, t := range ts {
-			yy := int(y(t))
-			if (i+1)%every != 0 || yy < room {
-				continue
+			if yy := int(y(t)); (i+1)%every == 0 && yy >= room {
+				marks = append(marks, tick{yy, tickStr(t / div)})
 			}
-			hline(gtx, 0, pw, yy, cGridLine)
-			v.placeText(gtx, theme.Size11, w, yy, 1, 0.5, quiet, tickStr(t/div), nil)
+		}
+		// The gutter fits the widest number, as the CPU graph's does; the
+		// top label, which carries the unit, reaches over the plot and the
+		// top rule stops short of it.
+		quiet := v.th.TextQuiet
+		measure := func(s string) int {
+			r, _ := v.placeText(gtx, theme.Size11, 0, 0, 0, 0, quiet, s, func(image.Rectangle) bool { return false })
+			return r.Dx()
+		}
+		gw := 0
+		for _, m := range marks {
+			gw = max(gw, measure(m.s))
+		}
+		pw := w - gw - gtx.Dp(8)
+		topStr := tickStr(top/div) + " " + unit
+		x := func(t time.Time) float32 { return float32(pw) * (1 - float32(end.Sub(t))/float32(window)) }
+		hline(gtx, 0, min(pw, w-measure(topStr)-gtx.Dp(8)), 0, cSparkTop)
+		hline(gtx, 0, pw, sh-1, cSparkBot)
+		v.placeText(gtx, theme.Size11, w, 0, 1, 0.5, quiet, topStr, nil)
+		for _, m := range marks {
+			if m.y < sh {
+				hline(gtx, 0, pw, m.y, cGridLine)
+			}
+			v.placeText(gtx, theme.Size11, w, m.y, 1, 0.5, quiet, m.s, nil)
 		}
 		func() {
 			defer clip.Rect{Min: image.Pt(0, -sh), Max: image.Pt(pw, 2*sh)}.Push(gtx.Ops).Pop()

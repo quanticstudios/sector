@@ -16,6 +16,12 @@ request merges, `git pull --ff-only` and run `sh scripts/release.sh --tag`.
 It tags the release commit on `main` and pushes the tag once, which starts
 the release build. Either step takes `--dry-run`.
 
+## Unreleased
+
+- The memory, disk and network graphs keep only as much room on the right
+  as their axis numbers need, like the CPU graph, instead of a wide empty
+  strip.
+
 ## v0.1.1
 
 - `go get github.com/quanticstudios/sector` works: a test fixture's folder name had a colon, which Go's module zips refuse.
