@@ -21,8 +21,10 @@ type die struct {
 	cores []sample.Core
 }
 
-// dies groups the cores by die. A CPU that reports no cores gets one core
-// per thread on a single die.
+// dies groups the cores by die and numbers them 0 up in die order: the
+// kernel's core ids skip numbers on some CPUs, such as 0, 4, 8 for an Intel
+// hybrid's performance cores. A CPU that reports no cores gets one core per
+// thread on a single die.
 func dies(c sample.CPU) []die {
 	cores := c.Cores
 	if len(cores) == 0 {
@@ -40,6 +42,13 @@ func dies(c sample.CPU) []die {
 	for _, k := range cores {
 		i := min(max(0, k.Die), len(out)-1)
 		out[i].cores = append(out[i].cores, k)
+	}
+	n := 0
+	for _, d := range out {
+		for j := range d.cores {
+			d.cores[j].ID = n
+			n++
+		}
 	}
 	return out
 }
@@ -101,8 +110,10 @@ func (v *View) dieHead(d die, n, smt int) layout.Widget {
 		sub := ""
 		if len(d.cores) > 0 && !narrow(gtx) {
 			sub = fmt.Sprintf("cores %d to %d", d.cores[0].ID, d.cores[len(d.cores)-1].ID)
-			if smt == 2 {
+			if two := twoThreaded(d); two == len(d.cores) && smt == 2 {
 				sub += ", both threads"
+			} else if two > 0 {
+				sub += fmt.Sprintf(", %d with two threads", two)
 			}
 		}
 		return spread(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -114,6 +125,17 @@ func (v *View) dieHead(d die, n, smt int) layout.Widget {
 			return v.rich(gtx, theme.Size12, v.temp(d.tempC)...)
 		})
 	}
+}
+
+// twoThreaded counts d's cores with more than one thread.
+func twoThreaded(d die) int {
+	n := 0
+	for _, k := range d.cores {
+		if len(k.Threads) > 1 {
+			n++
+		}
+	}
+	return n
 }
 
 // temp is a thermometer and a temperature, green at 50 °C to red at 85 °C.
