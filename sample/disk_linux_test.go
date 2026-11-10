@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -110,5 +111,13 @@ func TestLVMOverTwoDisks(t *testing.T) {
 	}
 	if !reflect.DeepEqual(drives, want) {
 		t.Errorf("got %+v, want %+v", drives, want)
+	}
+}
+
+func TestRootDriveFirst(t *testing.T) {
+	ds := []Drive{{Name: "nvme0n1", Mounts: []string{"/srv/data"}}, {Name: "sda"}, {Name: "nvme1n1", Mounts: []string{"/", "/boot"}}}
+	slices.SortFunc(ds, driveOrder)
+	if ds[0].Name != "nvme1n1" || ds[1].Name != "nvme0n1" || ds[2].Name != "sda" {
+		t.Fatalf("order %s %s %s, want nvme1n1 nvme0n1 sda", ds[0].Name, ds[1].Name, ds[2].Name)
 	}
 }

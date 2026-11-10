@@ -268,7 +268,20 @@ func (s *sampler) readDrives(dt float64) ([]Drive, error) {
 		}
 		drives = append(drives, d)
 	}
-	slices.SortFunc(drives, func(a, b Drive) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortFunc(drives, driveOrder)
 	s.disks = cur
 	return drives, errors.Join(err1, err2)
+}
+
+// driveOrder puts the drive holding / first, since it holds the system,
+// then the rest by name.
+func driveOrder(a, b Drive) int {
+	ar, br := slices.Contains(a.Mounts, "/"), slices.Contains(b.Mounts, "/")
+	switch {
+	case ar && !br:
+		return -1
+	case br && !ar:
+		return 1
+	}
+	return strings.Compare(a.Name, b.Name)
 }
