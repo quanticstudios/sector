@@ -22,8 +22,9 @@ import (
 	"github.com/quanticstudios/sector/theme"
 )
 
-// History is how many samples the graphs keep.
-const History = 120
+// History is how many samples the graphs keep: the window at the shortest
+// interval, 1 s, and a few before it.
+const History = 125
 
 // View is the dashboard: title bar, CPU by group, cores, memory, drives,
 // network and the process groups.
